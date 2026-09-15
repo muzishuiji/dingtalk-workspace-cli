@@ -1431,6 +1431,7 @@ var builtinCommandNames = map[string]bool{
 	"doctor": true, "event": true, "completion": true, "skill": true,
 	"plugin": true, "profile": true, "recovery": true, "version": true, "help": true,
 	"schema": true, "mcp": true, "upgrade": true,
+	"card": true,
 }
 
 // commandNameSet returns a new set containing every name in base plus extras.

@@ -1,0 +1,11 @@
+{
+  "recipe": "approval",
+  "surfaceId": "dws-local-approval",
+  "title": "发布方案审批",
+  "subtitle": "DWS A2UI 本地验证",
+  "status": "待确认",
+  "body": "### 变更摘要\n\n- 新增语义化 Recipe\n- 支持增量更新与检查点\n- 提供离线参考预览",
+  "primaryCta": "批准发布",
+  "secondaryCta": "退回修改",
+  "options": ["同意", "需要修改", "拒绝"]
+}
