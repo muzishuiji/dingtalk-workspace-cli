@@ -1,0 +1,12 @@
+{
+  "recipe": "information",
+  "surfaceId": "dws-local-information",
+  "title": "季度执行报告",
+  "status": "已完成",
+  "body": "## 核心结论\n\n- 关键指标符合预期\n- 风险项已收敛\n- 完整记录见附件",
+  "imageUrl": "https://img.alicdn.com/imgextra/i1/O1CN01YfTn5L1cWZlq6I8IL_!!6000000003605-2-tps-1200-600.png",
+  "fileName": "quarterly-report.pdf",
+  "fileUrl": "https://example.com/quarterly-report.pdf",
+  "detailUrl": "https://example.com/report/details",
+  "primaryCta": "查看完整报告"
+}
