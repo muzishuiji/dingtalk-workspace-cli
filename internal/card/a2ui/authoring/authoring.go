@@ -35,20 +35,41 @@ type Block struct {
 	Components  []string `json:"components"`
 }
 
+type Metric struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type Highlight struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+	Status string `json:"status,omitempty"`
+	Theme  string `json:"theme,omitempty"`
+}
+
 type Spec struct {
-	Recipe     string   `json:"recipe"`
-	SurfaceID  string   `json:"surfaceId"`
-	Title      string   `json:"title"`
-	Subtitle   string   `json:"subtitle,omitempty"`
-	Status     string   `json:"status,omitempty"`
-	Body       string   `json:"body"`
-	ImageURL   string   `json:"imageUrl,omitempty"`
-	FileName   string   `json:"fileName,omitempty"`
-	FileURL    string   `json:"fileUrl,omitempty"`
-	DetailURL  string   `json:"detailUrl,omitempty"`
-	PrimaryCTA string   `json:"primaryCta,omitempty"`
-	Secondary  string   `json:"secondaryCta,omitempty"`
-	Options    []string `json:"options,omitempty"`
+	Recipe          string      `json:"recipe"`
+	SurfaceID       string      `json:"surfaceId"`
+	Title           string      `json:"title"`
+	Subtitle        string      `json:"subtitle,omitempty"`
+	Status          string      `json:"status,omitempty"`
+	Body            string      `json:"body"`
+	ImageURL        string      `json:"imageUrl,omitempty"`
+	ImageAlt        string      `json:"imageAlt,omitempty"`
+	ImageCaption    string      `json:"imageCaption,omitempty"`
+	Metrics         []Metric    `json:"metrics,omitempty"`
+	Highlights      []Highlight `json:"highlights,omitempty"`
+	FileName        string      `json:"fileName,omitempty"`
+	FileURL         string      `json:"fileUrl,omitempty"`
+	FilePreviewURL  string      `json:"filePreviewUrl,omitempty"`
+	FileDescription string      `json:"fileDescription,omitempty"`
+	FileMIMEType    string      `json:"fileMimeType,omitempty"`
+	FileSize        float64     `json:"fileSize,omitempty"`
+	Details         string      `json:"details,omitempty"`
+	DetailURL       string      `json:"detailUrl,omitempty"`
+	PrimaryCTA      string      `json:"primaryCta,omitempty"`
+	Secondary       string      `json:"secondaryCta,omitempty"`
+	Options         []string    `json:"options,omitempty"`
 }
 
 var recipes = []Recipe{
@@ -146,30 +167,107 @@ func Compile(spec Spec) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	children := []string{"header", "divider_top", "body"}
+	status := defaultString(spec.Status, "进行中")
+	children := []string{"header"}
 	components := []any{
 		map[string]any{"id": "root", "component": "Card", "child": "content", "padding": 16.0, "cornerRadius": 12.0},
 		map[string]any{"id": "content", "component": "Column", "children": children, "align": "stretch", "gap": 12.0},
 		map[string]any{"id": "header", "component": "Row", "children": []string{"title", "status"}, "align": "center", "gap": 8.0},
-		map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "bold": true, "weight": 1.0},
-		map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": "blue"},
-		map[string]any{"id": "divider_top", "component": "Divider", "axis": "horizontal"},
-		map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}},
+		map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "bold": true, "maxLine": 2.0, "weight": 1.0},
+		map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
 	}
-	data := map[string]any{"content": map[string]any{"title": spec.Title, "subtitle": spec.Subtitle, "status": defaultString(spec.Status, "进行中"), "body": spec.Body}, "form": map[string]any{}}
+	data := map[string]any{"content": map[string]any{"title": spec.Title, "subtitle": spec.Subtitle, "status": status, "body": spec.Body}, "form": map[string]any{}}
+	if spec.Subtitle != "" {
+		children = append(children, "subtitle")
+		components = append(components, map[string]any{"id": "subtitle", "component": "Text", "text": map[string]any{"path": "/content/subtitle"}, "variant": "caption", "color": "gray", "maxLine": 3.0})
+	}
+	children = append(children, "divider_top")
+	components = append(components, map[string]any{"id": "divider_top", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"})
 	if spec.ImageURL != "" {
-		children = appendAt(children, 2, "hero")
-		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": "cover", "variant": "largeFeature", "accessibility": map[string]any{"label": spec.Title}})
+		children = append(children, "hero")
+		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": "cover", "variant": "header", "cornerRadius": 10.0, "previewEnabled": true, "accessibility": map[string]any{"label": defaultString(spec.ImageAlt, spec.Title)}})
+		if spec.ImageCaption != "" {
+			children = append(children, "image_caption")
+			components = append(components, map[string]any{"id": "image_caption", "component": "Text", "text": spec.ImageCaption, "variant": "caption", "color": "gray", "maxLine": 3.0})
+		}
+	}
+	if len(spec.Metrics) > 0 {
+		children = append(children, "metrics_title", "metrics")
+		metricChildren := make([]string, 0, len(spec.Metrics))
+		components = append(components, map[string]any{"id": "metrics_title", "component": "Text", "text": "关键指标", "variant": "body", "bold": true})
+		for i, metric := range spec.Metrics {
+			metricID := fmt.Sprintf("metric_%d", i+1)
+			valueID := fmt.Sprintf("metric_value_%d", i+1)
+			labelID := fmt.Sprintf("metric_label_%d", i+1)
+			metricChildren = append(metricChildren, metricID)
+			components = append(components,
+				map[string]any{"id": metricID, "component": "Column", "children": []string{valueID, labelID}, "gap": 2.0, "padding": 10.0, "cornerRadius": 8.0, "backgroundColorToken": "common_fg_z1_color", "weight": 1.0},
+				map[string]any{"id": valueID, "component": "Text", "text": metric.Value, "variant": "body", "bold": true, "maxLine": 2.0},
+				map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "color": "gray", "maxLine": 2.0},
+			)
+		}
+		components = append(components, map[string]any{"id": "metrics", "component": "Row", "children": metricChildren, "align": "start", "gap": 8.0})
+	}
+	children = append(children, "body")
+	components = append(components, map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}})
+	if len(spec.Highlights) > 0 {
+		children = append(children, "highlights_title", "highlights")
+		highlightChildren := make([]string, 0, len(spec.Highlights))
+		components = append(components, map[string]any{"id": "highlights_title", "component": "Text", "text": "重点进展", "variant": "body", "bold": true})
+		for i, highlight := range spec.Highlights {
+			rowID := fmt.Sprintf("highlight_%d", i+1)
+			copyID := fmt.Sprintf("highlight_copy_%d", i+1)
+			titleID := fmt.Sprintf("highlight_title_%d", i+1)
+			detailID := fmt.Sprintf("highlight_detail_%d", i+1)
+			tagID := fmt.Sprintf("highlight_status_%d", i+1)
+			copyChildren := []string{titleID}
+			highlightChildren = append(highlightChildren, rowID)
+			components = append(components, map[string]any{"id": titleID, "component": "Text", "text": highlight.Title, "variant": "body", "bold": true, "maxLine": 2.0})
+			if highlight.Detail != "" {
+				copyChildren = append(copyChildren, detailID)
+				components = append(components, map[string]any{"id": detailID, "component": "Text", "text": highlight.Detail, "variant": "caption", "color": "gray", "maxLine": 3.0})
+			}
+			components = append(components, map[string]any{"id": copyID, "component": "Column", "children": copyChildren, "gap": 2.0, "weight": 1.0})
+			rowChildren := []string{copyID}
+			if highlight.Status != "" {
+				rowChildren = append(rowChildren, tagID)
+				components = append(components, map[string]any{"id": tagID, "component": "Tag", "text": highlight.Status, "theme": validTagTheme(highlight.Theme), "variant": "filled"})
+			}
+			components = append(components, map[string]any{"id": rowID, "component": "Row", "children": rowChildren, "align": "center", "gap": 10.0, "padding": 10.0, "cornerRadius": 8.0, "backgroundColorToken": "common_fg_z1_color"})
+		}
+		components = append(components, map[string]any{"id": "highlights", "component": "Column", "children": highlightChildren, "gap": 8.0})
 	}
 	if spec.FileURL != "" {
-		children = append(children, "file")
-		components = append(components, map[string]any{"id": "file", "component": "File", "fileName": defaultString(spec.FileName, "附件"), "url": spec.FileURL, "description": "相关附件"})
-	}
-	if spec.DetailURL != "" {
-		children = append(children, "details")
+		children = append(children, "divider_attachment", "attachment_title", "file")
+		file := map[string]any{"id": "file", "component": "File", "fileName": defaultString(spec.FileName, "附件"), "url": spec.FileURL, "description": defaultString(spec.FileDescription, "相关附件"), "onPreview": eventAction("file_preview", spec.SurfaceID)}
+		if spec.FilePreviewURL != "" {
+			file["previewUrl"] = spec.FilePreviewURL
+		}
+		if spec.FileMIMEType != "" {
+			file["mimeType"] = spec.FileMIMEType
+		}
+		if spec.FileSize > 0 {
+			file["size"] = spec.FileSize
+		}
 		components = append(components,
-			map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "更多信息", "children": []string{"detail_link"}},
-			map[string]any{"id": "detail_link", "component": "Link", "text": "查看详情", "action": map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": spec.DetailURL}}}},
+			map[string]any{"id": "divider_attachment", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"},
+			map[string]any{"id": "attachment_title", "component": "Text", "text": "交付产物", "variant": "body", "bold": true},
+			file,
+		)
+	}
+	if spec.DetailURL != "" || spec.Details != "" {
+		children = append(children, "details")
+		detailChildren := []string{}
+		if spec.Details != "" {
+			detailChildren = append(detailChildren, "details_body")
+			components = append(components, map[string]any{"id": "details_body", "component": "Markdown", "content": spec.Details})
+		}
+		if spec.DetailURL != "" {
+			detailChildren = append(detailChildren, "detail_link")
+			components = append(components, map[string]any{"id": "detail_link", "component": "Link", "text": "打开完整详情", "action": map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": spec.DetailURL}}}})
+		}
+		components = append(components,
+			map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "数据口径与补充说明", "variant": "indented", "defaultExpanded": false, "maxHeight": 240.0, "children": detailChildren, "fallbackMarkdown": "### 数据口径与补充说明\n\n请打开完整详情查看。"},
 		)
 	}
 	if spec.Recipe == "approval" || spec.Recipe == "form" {
@@ -228,11 +326,37 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func appendAt(values []string, index int, value string) []string {
-	values = append(values, "")
-	copy(values[index+1:], values[index:])
-	values[index] = value
-	return values
+func validTagTheme(value string) string {
+	switch value {
+	case "black", "gray", "red", "orange", "green", "blue":
+		return value
+	default:
+		return "blue"
+	}
+}
+
+func statusTagTheme(value string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case containsAny(lower, "incomplete", "unsuccessful", "not complete", "not completed", "not successful", "failed", "failure", "error"),
+		containsAny(value, "未完成", "未通过", "不通过", "失败", "异常", "风险"):
+		return "red"
+	case containsAny(lower, "complete", "success", "passed"), containsAny(value, "已完成", "成功", "已通过"):
+		return "green"
+	case containsAny(lower, "pending", "waiting", "in progress"), containsAny(value, "待", "进行"):
+		return "orange"
+	default:
+		return "blue"
+	}
+}
+
+func containsAny(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func eventAction(name, surfaceID string) map[string]any {

@@ -2,11 +2,29 @@
   "recipe": "information",
   "surfaceId": "dws-local-information",
   "title": "季度执行报告",
+  "subtitle": "2026 Q3 · 产品与交付联合复盘 · 更新于 9 月 15 日",
   "status": "已完成",
-  "body": "## 核心结论\n\n- 关键指标符合预期\n- 风险项已收敛\n- 完整记录见附件",
-  "imageUrl": "https://img.alicdn.com/imgextra/i1/O1CN01YfTn5L1cWZlq6I8IL_!!6000000003605-2-tps-1200-600.png",
+  "body": "## 核心结论\n\n本季度核心目标按计划完成，体验指标和交付质量均达到验收线。剩余两项低风险工作已进入下季度计划，不影响当前版本发布。",
+  "imageUrl": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAwIDYwMCI+PHJlY3Qgd2lkdGg9IjEyMDAiIGhlaWdodD0iNjAwIiBmaWxsPSIjMTcyNDNiIi8+PHJlY3QgeD0iNzIiIHk9IjcyIiB3aWR0aD0iMTA1NiIgaGVpZ2h0PSI0NTYiIHJ4PSIyOCIgZmlsbD0iIzIyMzQ1NCIvPjx0ZXh0IHg9IjEyMCIgeT0iMTYwIiBmaWxsPSIjOWZiNGQ4IiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIzMCI+UVVBUlRFUkxZIEVYRUNVVElPTjwvdGV4dD48dGV4dCB4PSIxMjAiIHk9IjI3MCIgZmlsbD0iI2ZmZmZmZiIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iOTgiIGZvbnQtd2VpZ2h0PSI3MDAiPjk2JTwvdGV4dD48dGV4dCB4PSIxMjAiIHk9IjMzMCIgZmlsbD0iI2M4ZDVlYiIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjgiPnRhcmdldHMgY29tcGxldGVkIG9uIHNjaGVkdWxlPC90ZXh0PjxyZWN0IHg9IjY5MCIgeT0iMzcwIiB3aWR0aD0iNzQiIGhlaWdodD0iOTIiIHJ4PSIxMCIgZmlsbD0iIzZhYTZmZiIvPjxyZWN0IHg9Ijc5MiIgeT0iMzAwIiB3aWR0aD0iNzQiIGhlaWdodD0iMTYyIiByeD0iMTAiIGZpbGw9IiM3NmQ4YjEiLz48cmVjdCB4PSI4OTQiIHk9IjIyNCIgd2lkdGg9Ijc0IiBoZWlnaHQ9IjIzOCIgcng9IjEwIiBmaWxsPSIjZjViZDY5Ii8+PHJlY3QgeD0iOTk2IiB5PSIxNDIiIHdpZHRoPSI3NCIgaGVpZ2h0PSIzMjAiIHJ4PSIxMCIgZmlsbD0iIzhkOWNmZiIvPjwvc3ZnPg==",
+  "imageAlt": "季度报告的封面示例图",
+  "imageCaption": "报告封面 · 支持点击查看大图",
+  "metrics": [
+    {"label": "目标完成率", "value": "96%"},
+    {"label": "按期交付", "value": "18 / 19"},
+    {"label": "高风险项", "value": "0"}
+  ],
+  "highlights": [
+    {"title": "核心能力交付", "detail": "三项关键能力已完成灰度验收", "status": "已完成", "theme": "green"},
+    {"title": "体验指标改善", "detail": "关键路径平均耗时下降 23%", "status": "符合预期", "theme": "blue"},
+    {"title": "遗留事项收敛", "detail": "两项低风险工作转入下季度", "status": "已排期", "theme": "orange"}
+  ],
   "fileName": "quarterly-report.pdf",
   "fileUrl": "https://example.com/quarterly-report.pdf",
+  "filePreviewUrl": "https://example.com/quarterly-report/preview",
+  "fileDescription": "正式版 · 由报告 Agent 生成",
+  "fileMimeType": "application/pdf",
+  "fileSize": 2488320,
+  "details": "### 数据口径\n\n- 完成率按季度承诺项计算\n- 交付数包含已通过验收的需求\n- 风险统计截止到 2026-09-15",
   "detailUrl": "https://example.com/report/details",
   "primaryCta": "查看完整报告"
 }

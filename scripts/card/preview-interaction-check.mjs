@@ -42,6 +42,12 @@ let dispatched;
 
 global.document = {
   querySelectorAll(selector) {
+    if (selector === ".Image") {
+      return [];
+    }
+    if (selector === "[data-preview-event]") {
+      return [];
+    }
     if (selector === "[data-binding-path]") {
       return [textField, firstChoice, secondChoice];
     }

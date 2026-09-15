@@ -76,15 +76,24 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 
 func TestRenderRichInformationComponents(t *testing.T) {
 	messages, err := authoring.Compile(authoring.Spec{
-		Recipe:     "information",
-		SurfaceID:  "rich-preview",
-		Title:      "季度报告",
-		Body:       "## 核心结论\n\n指标符合预期。",
-		ImageURL:   "https://example.com/cover.png",
-		FileName:   "report.pdf",
-		FileURL:    "https://example.com/report.pdf",
-		DetailURL:  "https://example.com/details",
-		PrimaryCTA: "查看报告",
+		Recipe:          "information",
+		SurfaceID:       "rich-preview",
+		Title:           "季度报告",
+		Subtitle:        "2026 Q3 · 联合复盘",
+		Body:            "## 核心结论\n\n指标符合预期。",
+		ImageURL:        "https://example.com/cover.png",
+		ImageCaption:    "报告封面",
+		Metrics:         []authoring.Metric{{Label: "完成率", Value: "96%"}, {Label: "风险", Value: "0"}},
+		Highlights:      []authoring.Highlight{{Title: "核心交付", Detail: "已完成验收", Status: "已完成", Theme: "green"}},
+		FileName:        "report.pdf",
+		FileURL:         "https://example.com/report.pdf",
+		FilePreviewURL:  "https://example.com/report/preview",
+		FileDescription: "正式版",
+		FileMIMEType:    "application/pdf",
+		FileSize:        2488320,
+		Details:         "### 数据口径\n\n按验收结果计算。",
+		DetailURL:       "https://example.com/details",
+		PrimaryCTA:      "查看报告",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,13 +108,21 @@ func TestRenderRichInformationComponents(t *testing.T) {
 	}
 	rendered := string(html)
 	for _, want := range []string{
-		`data-component="Image"`, `alt="季度报告"`, `data-component="File"`, "report.pdf",
-		`data-component="CollapsiblePanel"`, "<details", "<summary>更多信息</summary>",
+		`data-component="Image"`, `class="ImagePreview"`, `aria-label="预览：季度报告"`, `alt="季度报告"`, `data-component="File"`, "report.pdf",
+		`class="FileMain" href="https://example.com/report/preview"`, `data-preview-event="file_preview"`,
+		`class="FileAction" href="https://example.com/report.pdf"`, "正式版 · 2.4 MB · application/pdf", `class="FileIcon">PDF`,
+		`data-component-id="metrics"`, "关键指标", "96%", `data-component-id="highlights"`, "核心交付", "已完成验收",
+		`data-max-line="2"`, `data-component="CollapsiblePanel"`, "<details>", "<summary>数据口径与补充说明</summary>",
+		`class="PanelContent" data-max-height="240"`, "<h3>数据口径</h3>",
 		`data-component="Link"`, `href="https://example.com/details"`, `data-component="Button"`, "<h2>核心结论</h2>",
+		"图片暂不可用", `image.naturalWidth<=1`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rich preview missing %q", want)
 		}
+	}
+	if strings.Contains(rendered, "<details open>") {
+		t.Fatal("CollapsiblePanel must honor the protocol default and start collapsed")
 	}
 }
 
@@ -137,5 +154,59 @@ func TestRenderMarkdownStructureAndEscaping(t *testing.T) {
 		if strings.Contains(rendered, unsafe) {
 			t.Fatalf("rendered Markdown contains unsafe output %q: %s", unsafe, rendered)
 		}
+	}
+}
+
+func TestRenderRejectsUnsafeImageURL(t *testing.T) {
+	messages, err := authoring.Compile(authoring.Spec{
+		Recipe:    "information",
+		SurfaceID: "unsafe-image-preview",
+		Title:     "图片安全验收",
+		Body:      "图片地址必须使用受控协议。",
+		ImageURL:  "javascript:alert(1)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := state.Reduce(state.Surface{}, messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(html)
+	if strings.Contains(rendered, `src="javascript:`) || strings.Contains(rendered, `src="#ZgotmplZ`) {
+		t.Fatalf("unsafe image URL reached rendered src: %s", rendered)
+	}
+	if !strings.Contains(rendered, `src=""`) {
+		t.Fatalf("unsafe image URL must render an empty source for the fallback state")
+	}
+}
+
+func TestRenderHonorsUnboundedPanelAndLargeLineLimit(t *testing.T) {
+	surface := state.Surface{
+		SurfaceID: "numeric-preview",
+		Components: map[string]map[string]any{
+			"root":        {"component": "Card", "child": "content"},
+			"content":     {"component": "Column", "children": []any{"copy", "details"}},
+			"copy":        {"component": "Text", "text": "长文本", "maxLine": 1200.0},
+			"details":     {"component": "CollapsiblePanel", "title": "不限高详情", "maxHeight": 0.0, "children": []any{"detail_copy"}},
+			"detail_copy": {"component": "Text", "text": "完整内容"},
+		},
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(html)
+	for _, want := range []string{`data-max-line="1200" style="-webkit-line-clamp:1200"`, `data-max-height="0"`} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("numeric preview missing %q", want)
+		}
+	}
+	if strings.Contains(rendered, "max-height:0px") {
+		t.Fatal("maxHeight 0 means unlimited and must not collapse panel content")
 	}
 }
