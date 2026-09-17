@@ -1,0 +1,26 @@
+{
+  "recipe": "report",
+  "surfaceId": "dws-local-report",
+  "title": "服务质量周报",
+  "subtitle": "第 37 周 · 生产环境 · 示例数据",
+  "status": "已生成",
+  "body": "## 本周结论\n\n整体服务稳定，关键指标符合目标。慢请求已集中到两个可控接口，治理任务已排入下周。",
+  "metrics": [
+    {"label": "可用性", "value": "99.96%"},
+    {"label": "P95 延迟", "value": "182 ms"},
+    {"label": "高风险项", "value": "0"}
+  ],
+  "highlights": [
+    {"title": "核心链路", "detail": "错误率较上周下降 31%", "status": "健康", "theme": "green"},
+    {"title": "慢请求治理", "detail": "两个接口进入专项优化", "status": "跟进中", "theme": "orange"}
+  ],
+  "fileName": "service-quality-weekly.pdf",
+  "fileUrl": "https://www.rfc-editor.org/rfc/rfc8259.pdf",
+  "filePreviewUrl": "https://www.rfc-editor.org/rfc/rfc8259.pdf",
+  "fileDescription": "周报完整版 · PDF",
+  "fileMimeType": "application/pdf",
+  "fileSize": 1843200,
+  "details": "### 统计口径\n\n可用性按五分钟窗口计算；延迟采用生产流量 P95；风险项仅统计未关闭的高等级事件。",
+  "detailUrl": "https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/docs/a2ui-agent-card-authoring-technical-design.md",
+  "primaryCta": "打开完整周报"
+}

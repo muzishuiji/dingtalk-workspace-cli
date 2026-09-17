@@ -15,6 +15,8 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/authoring"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/delivery"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/output"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/profilectx"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/testseam"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pkg/edition"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +45,25 @@ func (*cardTestCaller) JQ() string     { return "" }
 
 func runCardCommand(t *testing.T, caller *cardTestCaller, args ...string) (string, error) {
 	t.Helper()
+	testseam.Swap(t, &cardCurrentProfileIdentity, func() profilectx.Identity {
+		selector := ""
+		for i, arg := range args {
+			if arg == "--profile" && i+1 < len(args) {
+				selector = strings.TrimSpace(args[i+1])
+				break
+			}
+		}
+		if selector == "profile-b" {
+			return profilectx.Identity{CorpID: "corp-b", UserID: "user-b"}
+		}
+		return profilectx.Identity{CorpID: "corp-a", UserID: "user-a"}
+	})
+	return runCardCommandWithoutProfileSeam(t, caller, args...)
+}
+
+func runCardCommandWithoutProfileSeam(t *testing.T, caller *cardTestCaller, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("DWS_CONFIG_DIR", t.TempDir())
 	InitDepsForTest(t, caller)
 	root := &cobra.Command{Use: "dws", SilenceErrors: true, SilenceUsage: true}
 	ctx, _ := output.WithResultStore(context.Background())
@@ -107,6 +128,39 @@ func TestCrossPlatformCoverageCardOfflineComposeLintPreview(t *testing.T) {
 	}
 }
 
+func TestCrossPlatformCoverageCardComposeReportsInferredRecipe(t *testing.T) {
+	specPath := filepath.Join(t.TempDir(), "spec.json")
+	if err := os.WriteFile(specPath, []byte(`{"surfaceId":"inferred","title":"普通通知","body":"处理完成"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := runCardCommand(t, &cardTestCaller{}, "compose", "--file", specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `"recipe": "notification"`) {
+		t.Fatalf("compose output=%s", stdout)
+	}
+}
+
+func TestCrossPlatformCoverageLegacyA2UIChatCommandsPointToCardCommands(t *testing.T) {
+	root := newChatCommand()
+	for _, test := range []struct {
+		path []string
+		want string
+	}{
+		{path: []string{"message", "send-a2ui-card"}, want: "dws card send"},
+		{path: []string{"message", "update-a2ui-card"}, want: "dws card update"},
+	} {
+		command, _, err := root.Find(test.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(command.Deprecated, test.want) {
+			t.Fatalf("%v deprecated=%q, want %q", test.path, command.Deprecated, test.want)
+		}
+	}
+}
+
 func TestCrossPlatformCoverageCardLintFailureIsStructuredAndOffline(t *testing.T) {
 	caller := &cardTestCaller{}
 	path := filepath.Join(t.TempDir(), "invalid.json")
@@ -132,7 +186,7 @@ func TestCrossPlatformCoverageCardSendUpdateUsesFakeIMAndLedger(t *testing.T) {
 	t.Setenv("DWS_CARD_STATE_DIR", stateDir)
 	caller := &cardTestCaller{}
 	messagePath := writeCardMessages(t)
-	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", messagePath)
+	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", messagePath, "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +212,7 @@ func TestCrossPlatformCoverageCardSendUpdateUsesFakeIMAndLedger(t *testing.T) {
 	if err := os.WriteFile(deltaPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdout, err = runCardCommand(t, caller, "finish", "--profile", "test", "--handle", envelope.Data.Handle, "--file", deltaPath)
+	stdout, err = runCardCommand(t, caller, "finish", "--profile", "test", "--handle", envelope.Data.Handle, "--file", deltaPath, "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,10 +226,10 @@ func TestCrossPlatformCoverageCardSendUpdateUsesFakeIMAndLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Revision != 2 || record.FlowStatus != "FINISH" {
+	if record.Revision != 2 || record.FlowStatus != "FINISH" || record.Profile.Selector != "corp-a:user-a" || record.Profile.CorpID != "corp-a" || record.Profile.UserID != "user-a" || record.Profile.Environment == "" {
 		t.Fatalf("record=%+v", record)
 	}
-	stdout, err = runCardCommand(t, caller, "finish", "--profile", "test", "--handle", envelope.Data.Handle, "--flow-status", "ABORTED")
+	stdout, err = runCardCommand(t, caller, "finish", "--profile", "test", "--handle", envelope.Data.Handle, "--flow-status", "ABORTED", "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +241,174 @@ func TestCrossPlatformCoverageCardSendUpdateUsesFakeIMAndLedger(t *testing.T) {
 	}
 }
 
+func TestCrossPlatformCoverageCardWritesRequireConfirmation(t *testing.T) {
+	t.Setenv("DWS_CARD_STATE_DIR", t.TempDir())
+	caller := &cardTestCaller{}
+	_, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", writeCardMessages(t))
+	if err == nil || !strings.Contains(err.Error(), "confirmation") && !strings.Contains(err.Error(), "确认") {
+		t.Fatalf("error=%v, want confirmation gate", err)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("remote calls before confirmation=%+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardSendRejectsPreviewOnlyImageURL(t *testing.T) {
+	t.Setenv("DWS_CARD_STATE_DIR", t.TempDir())
+	messages, err := authoring.Compile(authoring.Spec{
+		Recipe: "information", SurfaceID: "preview-only-image", Title: "Image delivery gate",
+		Body: "body", ImageURL: "data:image/svg+xml;base64,PHN2Zy8+",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "preview-only-image.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caller := &cardTestCaller{}
+	_, err = runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", path, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "absolute HTTPS URL") {
+		t.Fatalf("error=%v, want delivery resource rejection", err)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("preview-only image reached remote: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardUpdateRejectsDifferentProfile(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("DWS_CARD_STATE_DIR", stateDir)
+	caller := &cardTestCaller{}
+	stdout, err := runCardCommand(t, caller, "send", "--profile", "profile-a", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data struct{ Handle string } `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	deltaPath := filepath.Join(t.TempDir(), "delta.json")
+	if err := os.WriteFile(deltaPath, []byte(`[{"version":"v1.0","updateDataModel":{"surfaceId":"test-surface","path":"/content/status","value":"done"}}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runCardCommand(t, caller, "update", "--profile", "profile-b", "--handle", envelope.Data.Handle, "--file", deltaPath, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "different profile") {
+		t.Fatalf("error=%v, want scope rejection", err)
+	}
+	if len(caller.calls) != 1 {
+		t.Fatalf("cross-profile update reached remote: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardSendRequiresResolvedExactIdentity(t *testing.T) {
+	t.Setenv("DWS_CARD_STATE_DIR", t.TempDir())
+	testseam.Swap(t, &cardCurrentProfileIdentity, func() profilectx.Identity { return profilectx.Identity{} })
+	caller := &cardTestCaller{}
+	_, err := runCardCommandWithoutProfileSeam(t, caller, "send", "--profile", "ambiguous", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--yes")
+	if err == nil || !strings.Contains(err.Error(), "exact corpId:userId") {
+		t.Fatalf("error=%v, want exact identity rejection", err)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("unresolved profile reached remote: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardUpdateRejectsInvalidFinalSurface(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("DWS_CARD_STATE_DIR", stateDir)
+	caller := &cardTestCaller{}
+	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data struct{ Handle string } `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	deltaPath := filepath.Join(t.TempDir(), "invalid-delta.json")
+	delta := `[{
+  "version":"v1.0",
+  "updateComponents":{"surfaceId":"test-surface","components":[{"id":"root","component":"Card","child":"missing"}]}
+}]`
+	if err := os.WriteFile(deltaPath, []byte(delta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runCardCommand(t, caller, "update", "--profile", "test", "--handle", envelope.Data.Handle, "--file", deltaPath, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "invalid surface") {
+		t.Fatalf("error=%v, want merged surface rejection", err)
+	}
+	if len(caller.calls) != 1 {
+		t.Fatalf("invalid final surface reached remote: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardSnapshotPreservesUserInput(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("DWS_CARD_STATE_DIR", stateDir)
+	caller := &cardTestCaller{}
+	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data struct{ Handle string } `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	store := delivery.Store{Dir: stateDir}
+	record, err := store.Load(envelope.Data.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawData, _ := json.Marshal(record.Surface.Data)
+	var desiredData map[string]any
+	if err := json.Unmarshal(rawData, &desiredData); err != nil {
+		t.Fatal(err)
+	}
+	desiredData["content"].(map[string]any)["status"] = "已完成"
+	desiredData["form"].(map[string]any)["comment"] = "must not overwrite user input"
+	snapshot := map[string]any{"version": "v1.0", "surfaceId": record.Surface.SurfaceID, "catalogId": record.Surface.CatalogID, "components": record.Surface.Components, "dataModel": desiredData}
+	snapshotRaw, _ := json.Marshal(snapshot)
+	snapshotPath := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := os.WriteFile(snapshotPath, snapshotRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runCardCommand(t, caller, "update", "--profile", "test", "--handle", envelope.Data.Handle, "--file", snapshotPath, "--input-mode", "snapshot", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caller.calls) != 2 {
+		t.Fatalf("calls=%+v", caller.calls)
+	}
+	wire, ok := caller.calls[1].args["a2uiMessages"].([]string)
+	if !ok || len(wire) != 1 || !strings.Contains(wire[0], "/content/status") || strings.Contains(strings.Join(wire, "\n"), "/form") {
+		t.Fatalf("snapshot wire=%#v", caller.calls[1].args["a2uiMessages"])
+	}
+	updated, err := store.Load(envelope.Data.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := updated.Surface.Data.(map[string]any)
+	if got := data["form"].(map[string]any)["comment"]; got == "must not overwrite user input" {
+		t.Fatalf("snapshot overwrote protected input: %#v", got)
+	}
+}
+
 func TestCrossPlatformCoverageCardSendDryRunDoesNotCallOrPersist(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("DWS_CARD_STATE_DIR", stateDir)
 	caller := &cardTestCaller{dryRun: true}
-	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", writeCardMessages(t))
+	stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--dry-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +428,7 @@ func TestCrossPlatformCoverageCardSendResolvesQueryTargets(t *testing.T) {
 
 	t.Run("chat query", func(t *testing.T) {
 		caller := &cardTestCaller{dryRun: true}
-		stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--chat-query", "cid123456789", "--file", messagePath)
+		stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--chat-query", "cid123456789", "--file", messagePath, "--dry-run")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -222,7 +439,7 @@ func TestCrossPlatformCoverageCardSendResolvesQueryTargets(t *testing.T) {
 
 	t.Run("user query", func(t *testing.T) {
 		caller := &cardTestCaller{dryRun: true}
-		stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--user-query", helperCurrentDOpenID, "--file", messagePath)
+		stdout, err := runCardCommand(t, caller, "send", "--profile", "test", "--user-query", helperCurrentDOpenID, "--file", messagePath, "--dry-run")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,4 +447,16 @@ func TestCrossPlatformCoverageCardSendResolvesQueryTargets(t *testing.T) {
 			t.Fatalf("output=%s calls=%+v", stdout, caller.calls)
 		}
 	})
+}
+
+func TestCrossPlatformCoverageCardUserQueryHelpMatchesExactResolver(t *testing.T) {
+	flag := newCardSendCommand().Flags().Lookup("user-query")
+	if flag == nil {
+		t.Fatal("missing --user-query flag")
+	}
+	for _, want := range []string{"精确", "userId", "openDingTalkId", "不执行姓名模糊搜索"} {
+		if !strings.Contains(flag.Usage, want) {
+			t.Fatalf("--user-query help %q missing %q", flag.Usage, want)
+		}
+	}
 }

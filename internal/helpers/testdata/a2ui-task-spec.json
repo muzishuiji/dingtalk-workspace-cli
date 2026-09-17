@@ -1,0 +1,12 @@
+{
+  "recipe": "task",
+  "surfaceId": "dws-local-task",
+  "title": "修复登录页空白问题",
+  "subtitle": "前端平台组 · 截止今天 18:00 · 示例数据",
+  "status": "进行中",
+  "body": "### 当前进展\n\n- 已定位为缓存版本不一致\n- 修复已进入回归验证\n- 待补充异常网络场景",
+  "details": "### 完成标准\n\n1. 首次登录和刷新均可正常进入\n2. 弱网状态有明确反馈\n3. 自动化回归全部通过",
+  "detailUrl": "https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/docs/a2ui-agent-card-authoring-technical-design.md",
+  "primaryCta": "标记完成",
+  "secondaryCta": "查看任务"
+}

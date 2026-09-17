@@ -114,3 +114,75 @@ func TestValidateRejectsMissingInitialBinding(t *testing.T) {
 		t.Fatalf("diagnostics=%+v", result.Diagnostics)
 	}
 }
+
+func TestValidateRejectsMalformedUpdateComponents(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		body map[string]any
+		code string
+	}{
+		{name: "missing", body: map[string]any{"surfaceId": "s"}, code: "A2UI_COMPONENTS_REQUIRED"},
+		{name: "null", body: map[string]any{"surfaceId": "s", "components": nil}, code: "A2UI_COMPONENTS_TYPE"},
+		{name: "object", body: map[string]any{"surfaceId": "s", "components": map[string]any{}}, code: "A2UI_COMPONENTS_TYPE"},
+		{name: "empty", body: map[string]any{"surfaceId": "s", "components": []any{}}, code: "A2UI_COMPONENTS_EMPTY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := registry.Validate([]map[string]any{{"version": "v1.0", "updateComponents": tc.body}}, "update")
+			if result.Valid || !hasDiagnostic(result.Diagnostics, tc.code) {
+				t.Fatalf("result=%+v", result)
+			}
+		})
+	}
+}
+
+func TestDingTalkExtensionSemanticValidation(t *testing.T) {
+	for _, valid := range []string{"/ui/action", "/ui/action/result_1", "/ui/a-b/c_d/segment9"} {
+		if !validHostResultPath(valid) {
+			t.Fatalf("valid path rejected: %s", valid)
+		}
+	}
+	for _, invalid := range []string{"/ui/123", "/ui/a//b", "/ui/a~1b", "/other/action", "/ui/动作"} {
+		if validHostResultPath(invalid) {
+			t.Fatalf("invalid path accepted: %s", invalid)
+		}
+	}
+	component := map[string]any{"metadata": map[string]any{"extensions": map[string]any{
+		"dt_actionBindings":   map[string]any{},
+		"dt_actionBindingsV1": map[string]any{"action": map[string]any{"resultPath": "/ui/123"}},
+	}}}
+	diagnostics := validateDingTalkExtensions(0, "/updateComponents/components/0", component)
+	if !hasDiagnostic(diagnostics, "A2UI_ACTION_BINDINGS_VERSION") || !hasDiagnostic(diagnostics, "A2UI_HOST_RESULT_PATH") {
+		t.Fatalf("diagnostics=%+v", diagnostics)
+	}
+}
+
+func TestValidateDeliveryResourcesRejectsPreviewOnlyImageURLs(t *testing.T) {
+	message := func(resource string) []map[string]any {
+		return []map[string]any{{"version": "v1.0", "updateComponents": map[string]any{
+			"surfaceId":  "s",
+			"components": []any{map[string]any{"id": "hero", "component": "Image", "url": resource}},
+		}}}
+	}
+	if err := ValidateDeliveryResources(message("https://img.alicdn.com/cover.png")); err != nil {
+		t.Fatalf("https image rejected: %v", err)
+	}
+	for _, resource := range []string{"data:image/svg+xml;base64,PHN2Zy8+", "file:///tmp/cover.png", "http://example.com/cover.png", "/relative.png"} {
+		if err := ValidateDeliveryResources(message(resource)); err == nil {
+			t.Fatalf("unsafe image URL accepted: %s", resource)
+		}
+	}
+}
+
+func hasDiagnostic(diagnostics []Diagnostic, code string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}

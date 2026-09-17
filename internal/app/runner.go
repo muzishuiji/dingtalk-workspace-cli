@@ -33,6 +33,7 @@ import (
 	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/executor"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/logging"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/profilectx"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/publishedmcp"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/safety"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/transport"
@@ -301,6 +302,9 @@ func (r *runtimeRunner) Run(ctx context.Context, invocation executor.Invocation)
 			return executor.Result{}, apperrors.NewValidation(fmt.Sprintf("profile %q not found", rawProfile))
 		}
 		resolvedSelector := profileRuntimeSelector(*profile, rawProfile)
+		previousIdentity := profilectx.GetIdentity()
+		profilectx.SetIdentity(profilectx.Identity{CorpID: profile.CorpID, UserID: profile.UserID})
+		defer profilectx.SetIdentity(previousIdentity)
 		authpkg.SetRuntimeProfile(resolvedSelector)
 		defer authpkg.SetRuntimeProfile(rawProfile)
 	}
@@ -417,6 +421,8 @@ func resolveMultiProfileSelections(configDir, rawSelector string) ([]multiProfil
 func (r *runtimeRunner) runMultiProfile(ctx context.Context, invocation executor.Invocation, selections []multiProfileSelection) (executor.Result, error) {
 	previousProfile := authpkg.RuntimeProfile()
 	defer authpkg.SetRuntimeProfile(previousProfile)
+	previousIdentity := profilectx.GetIdentity()
+	defer profilectx.SetIdentity(previousIdentity)
 
 	entries := make([]any, 0, len(selections))
 	succeeded := 0
@@ -425,6 +431,7 @@ func (r *runtimeRunner) runMultiProfile(ctx context.Context, invocation executor
 	for _, selection := range selections {
 		resolvedSelector := profileRuntimeSelector(selection.Profile, selection.Selector)
 		authpkg.SetRuntimeProfile(resolvedSelector)
+		profilectx.SetIdentity(profilectx.Identity{CorpID: selection.Profile.CorpID, UserID: selection.Profile.UserID})
 		result, err := r.runSingle(ctx, cloneInvocation(invocation), false)
 
 		entry := map[string]any{

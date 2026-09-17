@@ -1,0 +1,11 @@
+{
+  "recipe": "schedule",
+  "surfaceId": "dws-local-schedule",
+  "title": "日程冲突提醒",
+  "subtitle": "今天 15:00–16:00 · 示例日程",
+  "status": "需处理",
+  "body": "### 冲突日程\n\n**15:00 产品评审** · 6F 望海\n\n**15:30 客户方案沟通** · 线上会议\n\n两个日程重叠 30 分钟，建议调整其一。",
+  "details": "### 建议\n\n客户方案沟通有外部参与人，优先保留原时间；产品评审可调整到 16:00。",
+  "primaryCta": "调整日程",
+  "secondaryCta": "本次忽略"
+}

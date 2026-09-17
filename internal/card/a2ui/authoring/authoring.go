@@ -21,6 +21,23 @@ type Recipe struct {
 	Blocks      []string `json:"blocks"`
 }
 
+// SurfacePolicy is Agent-facing layout guidance. Width is currently a host
+// surface capability rather than a public A2UI Card field, so these values
+// guide recipe selection and renderer acceptance without leaking private wire
+// properties into an A2UI message.
+type SurfacePolicy struct {
+	Name                 string   `json:"name"`
+	Description          string   `json:"description"`
+	UseWhen              []string `json:"useWhen"`
+	MinWidth             int      `json:"minWidth"`
+	ObservedHostMinWidth int      `json:"observedHostMinWidth"`
+	ObservedHostMaxWidth int      `json:"observedHostMaxWidth"`
+	WidthMode            string   `json:"widthMode"`
+	NarrowViewport       string   `json:"narrowViewport"`
+	WidenWhen            []string `json:"widenWhen,omitempty"`
+	Enforcement          string   `json:"enforcement"`
+}
+
 type ComponentGuide struct {
 	Name        string `json:"name"`
 	Role        string `json:"role"`
@@ -33,6 +50,9 @@ type Block struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Components  []string `json:"components"`
+	Layout      string   `json:"layout,omitempty"`
+	Rules       []string `json:"rules,omitempty"`
+	Fallback    string   `json:"fallback,omitempty"`
 }
 
 type Metric struct {
@@ -54,6 +74,7 @@ type Spec struct {
 	Subtitle        string      `json:"subtitle,omitempty"`
 	Status          string      `json:"status,omitempty"`
 	Body            string      `json:"body"`
+	BackgroundColor string      `json:"backgroundColor,omitempty"`
 	ImageURL        string      `json:"imageUrl,omitempty"`
 	ImageAlt        string      `json:"imageAlt,omitempty"`
 	ImageCaption    string      `json:"imageCaption,omitempty"`
@@ -72,14 +93,31 @@ type Spec struct {
 	Options         []string    `json:"options,omitempty"`
 }
 
+// A2UI layout values follow the public Catalog's four-point spacing rhythm:
+// top-level sibling blocks use 8np, while surfaced or nested content uses a
+// 12np inset. Keeping these defaults explicit prevents Recipe-specific magic
+// numbers from drifting away from the renderer contract.
+const (
+	spacingTight              = 4.0
+	spacingBlock              = 8.0
+	spacingContent            = 12.0
+	transparentCardBackground = "#00FFFFFF"
+)
+
 var recipes = []Recipe{
 	{Name: "notification", Description: "一件事、一个状态、一个主要动作的通知", UseWhen: []string{"结果通知", "风险告警", "轻量提醒"}, Blocks: []string{"header", "summary", "actions"}},
 	{Name: "information", Description: "有摘要、媒体、附件和详情入口的信息卡", UseWhen: []string{"信息摘要", "内容推荐", "结果报告"}, Blocks: []string{"header", "hero", "summary", "attachments", "details", "actions"}},
-	{Name: "approval", Description: "带意见、单选和双动作的可靠审批卡", UseWhen: []string{"审批确认", "需要收集结构化输入"}, Blocks: []string{"header", "facts", "form", "actions", "terminal-status"}},
-	{Name: "task", Description: "任务状态、说明和处理动作", UseWhen: []string{"任务分派", "待办跟进"}, Blocks: []string{"header", "facts", "summary", "actions"}},
-	{Name: "schedule", Description: "日程冲突或会议提醒", UseWhen: []string{"日程提醒", "冲突处理"}, Blocks: []string{"header", "facts", "summary", "actions"}},
+	{Name: "approval", Description: "先选择审批结论、再补充判断依据的决策卡", UseWhen: []string{"审批确认", "需要给出明确决策"}, Blocks: []string{"header", "facts", "form", "actions", "terminal-status"}},
+	{Name: "task", Description: "任务状态、说明和处理动作", UseWhen: []string{"任务分派", "待办跟进"}, Blocks: []string{"compact-notification-header", "facts", "summary", "actions"}},
+	{Name: "schedule", Description: "日程冲突或会议提醒", UseWhen: []string{"日程提醒", "冲突处理"}, Blocks: []string{"compact-notification-header", "facts", "summary", "actions"}},
 	{Name: "report", Description: "层次化结论、明细和附件", UseWhen: []string{"分析报告", "执行结果"}, Blocks: []string{"header", "summary", "details", "attachments", "actions"}},
-	{Name: "form", Description: "收集文本和互斥选择后提交", UseWhen: []string{"澄清信息", "用户配置"}, Blocks: []string{"header", "form", "actions"}},
+	{Name: "form", Description: "按字段组收集信息并统一提交的录入卡", UseWhen: []string{"澄清信息", "用户配置", "补充业务参数"}, Blocks: []string{"header", "form", "actions"}},
+}
+
+var surfacePolicies = []SurfacePolicy{
+	{Name: "notification", Description: "紧凑通知、日程和任务提醒的单列消息面", UseWhen: []string{"notification", "schedule", "task"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"标题或事实值需要多行", "存在两个长操作文案"}, Enforcement: "host-surface-required"},
+	{Name: "standard", Description: "资讯、审批、表单和报告的标准单列消息面", UseWhen: []string{"information", "approval", "form", "report"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"存在宽表格、媒体或较长结构化字段", "内容在 360px 下产生高密度断行"}, Enforcement: "host-surface-required"},
+	{Name: "ai", Description: "思考区、流式 Markdown 和反馈操作组成的 AI 消息面", UseWhen: []string{"ai-streaming", "reasoning", "long-form-ai"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"Markdown 含表格、代码块或宽媒体", "长篇输出在窄宽下明显影响扫读"}, Enforcement: "host-surface-required"},
 }
 
 var guides = map[string]ComponentGuide{
@@ -101,6 +139,7 @@ var guides = map[string]ComponentGuide{
 
 var blocks = []Block{
 	{Name: "header", Description: "标题、来源与状态入口", Components: []string{"Row", "Text", "Tag"}},
+	{Name: "compact-notification-header", Description: "日程、任务和轻提醒使用的紧凑原生头部", Components: []string{"CardHeader", "Tag", "Column", "Text"}, Layout: "Card(padding=0) > Column(gap=0) > CardHeader(trailing=Tag) + Column(padding=8,gap=8)", Rules: []string{"必须使用 CardHeader 保留完整头部区域，不能用孤立 Tag 替代 header", "CardHeader 使用语义 theme，trailing Tag 只表达短状态", "正文区域使用 8np inset 和 8np 组间距，避免宿主边界与内容容器重复 padding", "空备注、空事实行和无信息增益的 Divider 不进入 children"}, Fallback: "宿主不支持 CardHeader 时退化为 Row(title + status)，正文结构和操作保持不变"},
 	{Name: "hero", Description: "关键封面或人物视觉", Components: []string{"Image"}},
 	{Name: "status", Description: "当前阶段或风险状态", Components: []string{"Tag", "Text"}},
 	{Name: "facts", Description: "短标签与值的事实表", Components: []string{"Column", "Row", "Text"}},
@@ -108,7 +147,7 @@ var blocks = []Block{
 	{Name: "metrics", Description: "少量关键指标", Components: []string{"Row", "Column", "Text"}},
 	{Name: "list", Description: "同构条目列表", Components: []string{"Column", "Card", "Text"}},
 	{Name: "timeline", Description: "按时间或阶段组织的进展", Components: []string{"Column", "Row", "Text", "Tag"}},
-	{Name: "media", Description: "携带业务信息的图片", Components: []string{"Image", "Text"}},
+	{Name: "image-text-item", Description: "文字主信息与辅助缩略图组成的紧凑图文项", Components: []string{"Row", "Column", "Text", "Image", "Link"}, Layout: "Row(align=center,gap=12) > Column(weight=1) + Image(variant=smallFeature)", Rules: []string{"文字列占据剩余宽度，标题最多 2 行、摘要最多 3 行", "smallFeature 提供 96×96 最大高度，Row 以该高度为基准并让文字列垂直居中", "不得使用 Row.align=stretch 冒充等高；当前公开端会把 stretch 降级为 start", "缩略图是辅助信息，默认关闭大图预览以避免扩大点击边界"}, Fallback: "宿主不能兑现 smallFeature 96×96 几何时移除缩略图，降级为紧凑纯文本项"},
 	{Name: "attachments", Description: "文件结果和附件", Components: []string{"File"}},
 	{Name: "form", Description: "文本与选择输入", Components: []string{"TextField", "ChoicePicker"}},
 	{Name: "actions", Description: "一个主动作及可选次动作", Components: []string{"Row", "Button", "Text"}},
@@ -120,6 +159,10 @@ var blocks = []Block{
 func Recipes() []Recipe { return append([]Recipe(nil), recipes...) }
 
 func Blocks() []Block { return append([]Block(nil), blocks...) }
+
+func SurfacePolicies() []SurfacePolicy {
+	return append([]SurfacePolicy(nil), surfacePolicies...)
+}
 
 func Guides() []ComponentGuide {
 	out := make([]ComponentGuide, 0, len(guides))
@@ -146,43 +189,68 @@ func Recommend(intent string) Recipe {
 	return recipes[0]
 }
 
+// ResolveRecipe returns the effective built-in Recipe without mutating the
+// caller's CompositionSpec. Commands use it both for compilation and for the
+// result envelope so an inferred Recipe is never reported as empty.
+func ResolveRecipe(spec Spec) (string, error) {
+	recipeName := strings.TrimSpace(spec.Recipe)
+	if recipeName == "" {
+		recipeName = Recommend(spec.Title + " " + spec.Body).Name
+	}
+	for _, recipe := range recipes {
+		if recipe.Name == recipeName {
+			return recipeName, nil
+		}
+	}
+	return "", fmt.Errorf("unknown recipe %q", recipeName)
+}
+
 func Compile(spec Spec) ([]map[string]any, error) {
 	if strings.TrimSpace(spec.SurfaceID) == "" || strings.TrimSpace(spec.Title) == "" || strings.TrimSpace(spec.Body) == "" {
 		return nil, fmt.Errorf("surfaceId, title and body are required")
 	}
-	if spec.Recipe == "" {
-		spec.Recipe = Recommend(spec.Title + " " + spec.Body).Name
+	effectiveRecipe, err := ResolveRecipe(spec)
+	if err != nil {
+		return nil, err
 	}
-	known := false
-	for _, recipe := range recipes {
-		if recipe.Name == spec.Recipe {
-			known = true
-			break
-		}
-	}
-	if !known {
-		return nil, fmt.Errorf("unknown recipe %q", spec.Recipe)
-	}
+	spec.Recipe = effectiveRecipe
 	registry, err := protocol.Load()
 	if err != nil {
 		return nil, err
 	}
 	status := defaultString(spec.Status, "进行中")
-	children := []string{"header"}
-	components := []any{
-		map[string]any{"id": "root", "component": "Card", "child": "content", "padding": 16.0, "cornerRadius": 12.0},
-		map[string]any{"id": "content", "component": "Column", "children": children, "align": "stretch", "gap": 12.0},
-		map[string]any{"id": "header", "component": "Row", "children": []string{"title", "status"}, "align": "center", "gap": 8.0},
-		map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "bold": true, "maxLine": 2.0, "weight": 1.0},
-		map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
+	backgroundColor := defaultString(spec.BackgroundColor, transparentCardBackground)
+	compactHeader := spec.Recipe == "task" || spec.Recipe == "schedule"
+	children := []string{}
+	rootPadding, contentGap := spacingContent, spacingBlock
+	components := []any{}
+	if compactHeader {
+		rootPadding, contentGap = 0, 0
+		components = append(components,
+			map[string]any{"id": "header", "component": "CardHeader", "title": map[string]any{"path": "/content/title"}, "theme": "blue", "trailing": "status", "fallbackMarkdown": "**" + spec.Title + "** · " + status},
+			map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
+		)
+	} else {
+		children = append(children, "header")
+		components = append(components,
+			map[string]any{"id": "header", "component": "Row", "children": []string{"title", "status"}, "align": "center", "gap": spacingBlock},
+			map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "bold": true, "maxLine": 2.0, "weight": 1.0},
+			map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
+		)
 	}
+	components = append([]any{
+		map[string]any{"id": "root", "component": "Card", "child": "content", "padding": rootPadding, "cornerRadius": 12.0, "backgroundColor": backgroundColor},
+		map[string]any{"id": "content", "component": "Column", "children": []string{}, "align": "stretch", "gap": contentGap},
+	}, components...)
 	data := map[string]any{"content": map[string]any{"title": spec.Title, "subtitle": spec.Subtitle, "status": status, "body": spec.Body}, "form": map[string]any{}}
 	if spec.Subtitle != "" {
 		children = append(children, "subtitle")
 		components = append(components, map[string]any{"id": "subtitle", "component": "Text", "text": map[string]any{"path": "/content/subtitle"}, "variant": "caption", "color": "gray", "maxLine": 3.0})
 	}
-	children = append(children, "divider_top")
-	components = append(components, map[string]any{"id": "divider_top", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"})
+	if !compactHeader {
+		children = append(children, "divider_top")
+		components = append(components, map[string]any{"id": "divider_top", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"})
+	}
 	if spec.ImageURL != "" {
 		children = append(children, "hero")
 		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": "cover", "variant": "header", "cornerRadius": 10.0, "previewEnabled": true, "accessibility": map[string]any{"label": defaultString(spec.ImageAlt, spec.Title)}})
@@ -201,12 +269,12 @@ func Compile(spec Spec) ([]map[string]any, error) {
 			labelID := fmt.Sprintf("metric_label_%d", i+1)
 			metricChildren = append(metricChildren, metricID)
 			components = append(components,
-				map[string]any{"id": metricID, "component": "Column", "children": []string{valueID, labelID}, "gap": 2.0, "padding": 10.0, "cornerRadius": 8.0, "backgroundColorToken": "common_fg_z1_color", "weight": 1.0},
+				map[string]any{"id": metricID, "component": "Column", "children": []string{valueID, labelID}, "gap": spacingTight, "padding": spacingContent, "cornerRadius": 8.0, "weight": 1.0},
 				map[string]any{"id": valueID, "component": "Text", "text": metric.Value, "variant": "body", "bold": true, "maxLine": 2.0},
 				map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "color": "gray", "maxLine": 2.0},
 			)
 		}
-		components = append(components, map[string]any{"id": "metrics", "component": "Row", "children": metricChildren, "align": "start", "gap": 8.0})
+		components = append(components, map[string]any{"id": "metrics", "component": "Row", "children": metricChildren, "align": "start", "gap": spacingBlock})
 	}
 	children = append(children, "body")
 	components = append(components, map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}})
@@ -227,15 +295,15 @@ func Compile(spec Spec) ([]map[string]any, error) {
 				copyChildren = append(copyChildren, detailID)
 				components = append(components, map[string]any{"id": detailID, "component": "Text", "text": highlight.Detail, "variant": "caption", "color": "gray", "maxLine": 3.0})
 			}
-			components = append(components, map[string]any{"id": copyID, "component": "Column", "children": copyChildren, "gap": 2.0, "weight": 1.0})
+			components = append(components, map[string]any{"id": copyID, "component": "Column", "children": copyChildren, "gap": spacingTight, "weight": 1.0})
 			rowChildren := []string{copyID}
 			if highlight.Status != "" {
 				rowChildren = append(rowChildren, tagID)
 				components = append(components, map[string]any{"id": tagID, "component": "Tag", "text": highlight.Status, "theme": validTagTheme(highlight.Theme), "variant": "filled"})
 			}
-			components = append(components, map[string]any{"id": rowID, "component": "Row", "children": rowChildren, "align": "center", "gap": 10.0, "padding": 10.0, "cornerRadius": 8.0, "backgroundColorToken": "common_fg_z1_color"})
+			components = append(components, map[string]any{"id": rowID, "component": "Row", "children": rowChildren, "align": "center", "gap": spacingBlock, "padding": spacingContent, "cornerRadius": 8.0})
 		}
-		components = append(components, map[string]any{"id": "highlights", "component": "Column", "children": highlightChildren, "gap": 8.0})
+		components = append(components, map[string]any{"id": "highlights", "component": "Column", "children": highlightChildren, "gap": spacingBlock})
 	}
 	if spec.FileURL != "" {
 		children = append(children, "divider_attachment", "attachment_title", "file")
@@ -267,23 +335,39 @@ func Compile(spec Spec) ([]map[string]any, error) {
 			components = append(components, map[string]any{"id": "detail_link", "component": "Link", "text": "打开完整详情", "action": map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": spec.DetailURL}}}})
 		}
 		components = append(components,
-			map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "数据口径与补充说明", "variant": "indented", "defaultExpanded": false, "maxHeight": 240.0, "children": detailChildren, "fallbackMarkdown": "### 数据口径与补充说明\n\n请打开完整详情查看。"},
+			map[string]any{"id": "details_content", "component": "Column", "children": detailChildren, "align": "stretch", "gap": spacingBlock, "padding": spacingContent},
+			map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "数据口径与补充说明", "variant": "indented", "defaultExpanded": false, "maxHeight": 240.0, "children": []string{"details_content"}, "fallbackMarkdown": "### 数据口径与补充说明\n\n请打开完整详情查看。"},
 		)
 	}
 	if spec.Recipe == "approval" || spec.Recipe == "form" {
-		children = append(children, "comment", "choice")
 		options := spec.Options
 		if len(options) == 0 {
-			options = []string{"同意", "拒绝"}
+			if spec.Recipe == "approval" {
+				options = []string{"同意", "需要修改", "拒绝"}
+			} else {
+				options = []string{"选项一", "选项二"}
+			}
 		}
 		optionValues := make([]any, 0, len(options))
 		for i, option := range options {
 			optionValues = append(optionValues, map[string]any{"label": option, "value": fmt.Sprintf("option_%d", i+1)})
 		}
-		components = append(components,
-			map[string]any{"id": "comment", "component": "TextField", "label": "补充说明", "value": map[string]any{"path": "/form/comment"}, "placeholder": "请输入说明", "variant": "longText"},
-			map[string]any{"id": "choice", "component": "ChoicePicker", "label": "处理结果", "variant": "mutuallyExclusive", "displayStyle": "checkbox", "options": optionValues, "value": map[string]any{"path": "/form/choice"}},
-		)
+		if spec.Recipe == "approval" {
+			children = append(children, "decision_title", "choice", "comment")
+			components = append(components,
+				map[string]any{"id": "decision_title", "component": "Text", "text": "审批决定", "variant": "body", "bold": true},
+				map[string]any{"id": "choice", "component": "ChoicePicker", "label": "处理结果", "variant": "mutuallyExclusive", "displayStyle": "checkbox", "options": optionValues, "value": map[string]any{"path": "/form/choice"}},
+				map[string]any{"id": "comment", "component": "TextField", "label": "审批意见（选填）", "value": map[string]any{"path": "/form/comment"}, "placeholder": "补充判断依据或修改建议", "variant": "longText"},
+			)
+		} else {
+			children = append(children, "form_intro", "form_fields")
+			components = append(components,
+				map[string]any{"id": "form_intro", "component": "Text", "text": "请完成以下信息", "variant": "body", "bold": true},
+				map[string]any{"id": "form_fields", "component": "Column", "children": []string{"comment", "choice"}, "align": "stretch", "gap": spacingContent, "padding": spacingContent, "cornerRadius": 8.0},
+				map[string]any{"id": "comment", "component": "TextField", "label": "补充信息", "value": map[string]any{"path": "/form/comment"}, "placeholder": "请输入 Agent 继续处理所需的信息", "variant": "longText"},
+				map[string]any{"id": "choice", "component": "ChoicePicker", "label": "执行方式", "variant": "mutuallyExclusive", "displayStyle": "checkbox", "options": optionValues, "value": map[string]any{"path": "/form/choice"}},
+			)
+		}
 		data["form"] = map[string]any{"comment": "", "choice": ""}
 	}
 	if spec.PrimaryCTA != "" || spec.Secondary != "" {
@@ -292,21 +376,30 @@ func Compile(spec Spec) ([]map[string]any, error) {
 		components = append(components, map[string]any{"id": "divider_actions", "component": "Divider", "axis": "horizontal"})
 		if spec.Secondary != "" {
 			actionChildren = append(actionChildren, "secondary_button")
+			secondaryVariant := "default"
+			if spec.Recipe == "form" {
+				secondaryVariant = "borderless"
+			}
 			components = append(components,
 				map[string]any{"id": "secondary_label", "component": "Text", "text": spec.Secondary, "variant": "body"},
-				map[string]any{"id": "secondary_button", "component": "Button", "child": "secondary_label", "variant": "default", "weight": 1.0, "action": eventAction("secondary", spec.SurfaceID)},
+				map[string]any{"id": "secondary_button", "component": "Button", "child": "secondary_label", "variant": secondaryVariant, "weight": 1.0, "action": eventAction(actionEventName(spec.Recipe, false), spec.SurfaceID)},
 			)
 		}
 		if spec.PrimaryCTA != "" {
 			actionChildren = append(actionChildren, "primary_button")
 			components = append(components,
 				map[string]any{"id": "primary_label", "component": "Text", "text": spec.PrimaryCTA, "variant": "body"},
-				map[string]any{"id": "primary_button", "component": "Button", "child": "primary_label", "variant": "primary", "weight": 1.0, "action": eventAction("primary", spec.SurfaceID)},
+				map[string]any{"id": "primary_button", "component": "Button", "child": "primary_label", "variant": "primary", "weight": 1.0, "action": eventAction(actionEventName(spec.Recipe, true), spec.SurfaceID)},
 			)
 		}
-		components = append(components, map[string]any{"id": "actions", "component": "Row", "children": actionChildren, "align": "center", "gap": 8.0})
+		components = append(components, map[string]any{"id": "actions", "component": "Row", "children": actionChildren, "align": "center", "gap": spacingBlock})
 	}
-	components[1].(map[string]any)["children"] = children
+	if compactHeader {
+		components = append(components, map[string]any{"id": "compact_body", "component": "Column", "children": children, "align": "stretch", "gap": spacingBlock, "padding": spacingBlock})
+		components[1].(map[string]any)["children"] = []string{"header", "compact_body"}
+	} else {
+		components[1].(map[string]any)["children"] = children
+	}
 	messages := []map[string]any{
 		{"version": "v1.0", "createSurface": map[string]any{"surfaceId": spec.SurfaceID, "catalogId": registry.Catalog().CatalogID, "sendDataModel": true}},
 		{"version": "v1.0", "updateDataModel": map[string]any{"surfaceId": spec.SurfaceID, "path": "/", "value": data}},
@@ -361,4 +454,25 @@ func containsAny(value string, candidates ...string) bool {
 
 func eventAction(name, surfaceID string) map[string]any {
 	return map[string]any{"event": map[string]any{"name": name, "context": map[string]any{"surfaceId": surfaceID, "form": map[string]any{"path": "/form"}}}}
+}
+
+func actionEventName(recipe string, primary bool) string {
+	if primary {
+		switch recipe {
+		case "approval":
+			return "approval_submit"
+		case "form":
+			return "form_submit"
+		default:
+			return "primary"
+		}
+	}
+	switch recipe {
+	case "approval":
+		return "approval_return"
+	case "form":
+		return "form_cancel"
+	default:
+		return "secondary"
+	}
 }

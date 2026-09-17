@@ -13,7 +13,16 @@ import (
 var (
 	runtimeProfileMu sync.RWMutex
 	runtimeProfile   string
+	runtimeIdentity  Identity
 )
+
+// Identity is the non-sensitive account identity resolved for the active
+// runtime profile. Keeping it beside the selector lets command packages bind
+// durable state without importing the authentication package.
+type Identity struct {
+	CorpID string
+	UserID string
+}
 
 // Set records the explicit profile selector for the current process.
 func Set(profile string) {
@@ -27,4 +36,18 @@ func Get() string {
 	runtimeProfileMu.RLock()
 	defer runtimeProfileMu.RUnlock()
 	return runtimeProfile
+}
+
+// SetIdentity records the resolved account identity for the current process.
+func SetIdentity(identity Identity) {
+	runtimeProfileMu.Lock()
+	defer runtimeProfileMu.Unlock()
+	runtimeIdentity = Identity{CorpID: strings.TrimSpace(identity.CorpID), UserID: strings.TrimSpace(identity.UserID)}
+}
+
+// GetIdentity returns the resolved account identity for the active profile.
+func GetIdentity() Identity {
+	runtimeProfileMu.RLock()
+	defer runtimeProfileMu.RUnlock()
+	return runtimeIdentity
 }

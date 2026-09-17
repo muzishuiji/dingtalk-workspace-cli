@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -311,7 +312,22 @@ func (r *Registry) Validate(messages []map[string]any, mode string) Validation {
 				dataRoot = body["value"]
 			}
 		}
-		if components, ok := body["components"].([]any); ok {
+		rawComponents, componentsExist := body["components"]
+		if operation == "updateComponents" && !componentsExist {
+			result.Diagnostics = append(result.Diagnostics, diag(i, "A2UI_COMPONENTS_REQUIRED", "component", "/updateComponents/components", "updateComponents.components is required", "provide a non-empty array of complete component definitions"))
+			continue
+		}
+		if componentsExist {
+			components, ok := rawComponents.([]any)
+			if !ok {
+				path := fmt.Sprintf("/%s/components", operation)
+				result.Diagnostics = append(result.Diagnostics, diag(i, "A2UI_COMPONENTS_TYPE", "component", path, operation+".components must be an array", "provide a non-empty array of complete component definitions"))
+				continue
+			}
+			if operation == "updateComponents" && len(components) == 0 {
+				result.Diagnostics = append(result.Diagnostics, diag(i, "A2UI_COMPONENTS_EMPTY", "component", "/updateComponents/components", "updateComponents.components must not be empty", "omit the operation when no component changed"))
+				continue
+			}
 			componentIDs := map[string]bool{}
 			for j, item := range components {
 				comp, ok := item.(map[string]any)
@@ -340,6 +356,7 @@ func (r *Registry) Validate(messages []map[string]any, mode string) Validation {
 				if err := r.validateComponent(name, comp); err != nil {
 					result.Diagnostics = append(result.Diagnostics, diag(i, "A2UI_COMPONENT_SCHEMA", "component", fmt.Sprintf("/%s/components/%d", operation, j), err.Error(), "query the component contract"))
 				}
+				result.Diagnostics = append(result.Diagnostics, validateDingTalkExtensions(i, fmt.Sprintf("/%s/components/%d", operation, j), comp)...)
 				result.Components++
 			}
 		}
@@ -363,6 +380,69 @@ func (r *Registry) Validate(messages []map[string]any, mode string) Validation {
 		}
 	}
 	return result
+}
+
+func validateDingTalkExtensions(messageIndex int, basePath string, value any) []Diagnostic {
+	var diagnostics []Diagnostic
+	var walk func(any, string, bool)
+	walk = func(current any, path string, actionBindings bool) {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				childPath := path + "/" + escapeJSONPointerToken(key)
+				if strings.HasPrefix(key, "dt_actionBindings") && key != "dt_actionBindingsV1" {
+					diagnostics = append(diagnostics, diag(messageIndex, "A2UI_ACTION_BINDINGS_VERSION", "component", childPath, "unsupported DingTalk action binding key "+key, "use dt_actionBindingsV1"))
+				}
+				nextBindings := actionBindings || key == "dt_actionBindingsV1"
+				if nextBindings && key == "resultPath" {
+					resultPath, ok := child.(string)
+					if !ok || !validHostResultPath(resultPath) {
+						diagnostics = append(diagnostics, diag(messageIndex, "A2UI_HOST_RESULT_PATH", "component", childPath, "resultPath must be an ASCII JSON Pointer below /ui with 2-16 non-numeric segments", "use a path such as /ui/action/result"))
+					}
+				}
+				walk(child, childPath, nextBindings)
+			}
+		case []any:
+			for index, child := range typed {
+				walk(child, fmt.Sprintf("%s/%d", path, index), actionBindings)
+			}
+		}
+	}
+	walk(value, basePath, false)
+	return diagnostics
+}
+
+func validHostResultPath(path string) bool {
+	if len(path) == 0 || len(path) > 256 || !strings.HasPrefix(path, "/ui/") {
+		return false
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(segments) < 2 || len(segments) > 16 || segments[0] != "ui" {
+		return false
+	}
+	for _, segment := range segments[1:] {
+		if segment == "" {
+			return false
+		}
+		hasNonDigit := false
+		for _, char := range segment {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_' || char == '-' {
+				hasNonDigit = true
+				continue
+			}
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+		if !hasNonDigit {
+			return false
+		}
+	}
+	return true
+}
+
+func escapeJSONPointerToken(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, "~", "~0"), "/", "~1")
 }
 
 func validateBindings(components map[string]map[string]any, dataRoot any) []Diagnostic {
@@ -499,6 +579,33 @@ func componentRefs(component map[string]any) []string {
 		refs = append(refs, children...)
 	}
 	return refs
+}
+
+// ValidateDeliveryResources applies transport constraints that are stricter
+// than the portable A2UI schema. DingTalk clients fetch Image resources from
+// HTTPS URLs; data/file/blob URLs may work in the reference preview but must
+// fail before a real send or update.
+func ValidateDeliveryResources(messages []map[string]any) error {
+	for messageIndex, message := range messages {
+		body, ok := message["updateComponents"].(map[string]any)
+		if !ok {
+			continue
+		}
+		components, _ := body["components"].([]any)
+		for componentIndex, raw := range components {
+			component, _ := raw.(map[string]any)
+			if component["component"] != "Image" {
+				continue
+			}
+			resource, _ := component["url"].(string)
+			parsed, err := url.Parse(resource)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				id, _ := component["id"].(string)
+				return fmt.Errorf("message %d component %d Image %q uses a preview-only or unsafe URL; real delivery requires an absolute HTTPS URL", messageIndex, componentIndex, id)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *Registry) validateComponent(name string, value any) error {

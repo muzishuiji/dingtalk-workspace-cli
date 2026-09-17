@@ -5,10 +5,12 @@ package helpers
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/authoring"
@@ -17,7 +19,10 @@ import (
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/protocol"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/state"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/corecmd/contract"
+	apperrors "github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/errors"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/output"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/profilectx"
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pkg/config"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +31,8 @@ var cardResultSpec = &contract.ResultSpec{
 	Outcomes:   []contract.ResultOutcome{contract.ResultOutcomeSuccess, contract.ResultOutcomeFailure},
 	DataSchema: json.RawMessage(`{"type":"object","description":"A2UI card command result","additionalProperties":true}`),
 }
+
+var cardCurrentProfileIdentity = profilectx.GetIdentity
 
 func newCardCommand() *cobra.Command {
 	root := newGroupCommand(&cobra.Command{Use: "card", Short: "构建、校验、预览、发送和更新 A2UI 卡片"})
@@ -185,7 +192,7 @@ func newCardGuideRulesCommand() *cobra.Command {
 	return NewLeafCommand(LeafSpec{Use: "rules", Short: "列出组件语义和组合规则", OutputRollout: output.RolloutUnifiedActive,
 		Safety: readSafety(), Contract: localContract("guide_rules", "card guide rules", "返回一期组件的场景语义、可靠性约束和视觉规则", "Agent 要自由组合组件或审查设计质量时", "需要精确字段合同使用 card catalog get", "dws card guide rules"),
 		ResultCall: func(*cobra.Command, string, map[string]any) (output.CommandResult, error) {
-			return output.Success(map[string]any{"components": authoring.Guides(), "rules": []string{"一张卡只保留一个主操作", "主要阅读顺序使用 Column，Row 最多并列两个长内容", "正文与操作区使用 Divider", "表单输入绑定 DataModel，由提交 Button context 回传", "流式文本使用 appendDataModel，失败后用 updateDataModel 全量检查点校准"}}), nil
+			return output.Success(map[string]any{"components": authoring.Guides(), "surfacePolicies": authoring.SurfacePolicies(), "rules": []string{"容器背景默认透明，只有用户明确要求或状态语义需要独立 Surface 时才配置背景", "一张卡只保留一个主操作", "主要阅读顺序使用 Column，Row 最多并列两个长内容", "正文与操作区使用 Divider", "表单输入绑定 DataModel，由提交 Button context 回传", "流式文本使用 appendDataModel，失败后用 updateDataModel 全量检查点校准", "卡片宽度按内容类型选择 SurfacePolicy；公开 A2UI Card 暂无整卡 minWidth 字段，禁止下发私有宽度属性，由宿主 Surface 按策略执行"}}), nil
 		},
 	})
 }
@@ -248,12 +255,12 @@ func newCardSendCommand() *cobra.Command {
 			{Name: "conversation-id", Bind: "conversationId", Usage: "群聊 openConversationId", Trim: true, OmitEmpty: true},
 			{Name: "chat-query", Bind: "chatQuery", Usage: "群名、群号或其他群线索；仅唯一解析时发送", Trim: true, OmitEmpty: true},
 			{Name: "open-dingtalk-id", Bind: "openDingtalkId", Usage: "单聊接收者 openDingTalkId", Trim: true, OmitEmpty: true},
-			{Name: "user-query", Bind: "userQuery", Usage: "姓名、userId 或其他人员线索；仅唯一解析时发送", Trim: true, OmitEmpty: true},
+			{Name: "user-query", Bind: "userQuery", Usage: "精确 userId 或 openDingTalkId；不执行姓名模糊搜索", Trim: true, OmitEmpty: true},
 			{Name: "summary", Bind: "summary", Usage: "卡片降级摘要", Trim: true, OmitEmpty: true},
 			{Name: "idempotency-key", Bind: "idempotencyKey", Usage: "可选稳定业务幂等键", Trim: true, OmitEmpty: true},
 			{Name: "support-forward", Bind: "supportForward", Usage: "是否允许转发", Kind: LeafBool},
 		},
-		Constraints: []LeafConstraint{{Kind: LeafExactlyOne, Flags: []string{"conversation-id", "chat-query", "open-dingtalk-id", "user-query"}}}, Safety: contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "not_required", Idempotency: "unknown"},
+		Constraints: []LeafConstraint{{Kind: LeafExactlyOne, Flags: []string{"conversation-id", "chat-query", "open-dingtalk-id", "user-query"}}}, Safety: contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "user_required", Idempotency: "unknown"},
 		Contract: compositeContract("send", "card send", "校验、冻结目标并通过 IM MCP 创建 A2UI 卡片，同时保存本地更新台账", "A2UI create 消息已准备好并需要发送到群聊或单聊时", "普通消息使用 chat message send；发送前仅检查使用 card lint", "dws card send --conversation-id <openConversationId> --file ./messages.json"), Validate: requireExplicitCardProfile, ResultCall: sendCardResult,
 	})
 }
@@ -266,7 +273,7 @@ func newCardUpdateCommand() *cobra.Command {
 			{Name: "input-mode", Bind: "inputMode", Usage: "messages 或 snapshot", Default: "messages", Enum: []string{"messages", "snapshot"}},
 			{Name: "flow-status", Bind: "flowStatus", Usage: "A2UI 流状态", Default: "PROCESSING", Enum: []string{"PROCESSING", "INPUTTING", "FINISH", "EXECUTING", "ERROR", "ABORTED", "TIMEOUT", "CONFIRMING", "CONFIRMED"}},
 		},
-		Safety:   contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "not_required", Idempotency: "unknown"},
+		Safety:   contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "user_required", Idempotency: "unknown"},
 		Contract: compositeContract("update", "card update", "更新已发送的 A2UI 卡片；messages 为协议增量，snapshot 自动生成完整组件 upsert 和数据检查点", "已有 card send 返回的 handle，需要增量更新组件或数据时", "结束流式生成时使用 card finish", "dws card update --handle <handle> --file ./delta.json"),
 		Validate: requireExplicitCardProfile, ResultCall: updateCardResult,
 	})
@@ -280,7 +287,7 @@ func newCardFinishCommand() *cobra.Command {
 			{Name: "input-mode", Bind: "inputMode", Usage: "messages 或 snapshot", Default: "messages", Enum: []string{"messages", "snapshot"}},
 			{Name: "flow-status", Bind: "flowStatus", Usage: "终态 A2UI 流状态", Default: "FINISH", Enum: []string{"FINISH", "ERROR", "ABORTED", "TIMEOUT"}},
 		},
-		Safety:   contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "not_required", Idempotency: "unknown"},
+		Safety:   contract.SafetySpec{Effect: "write", Risk: "medium", Confirmation: "user_required", Idempotency: "unknown"},
 		Contract: compositeContract("finish", "card finish", "结束 A2UI 流；可仅更新 flowStatus，也可原子发送最后一批消息", "已有 handle，需要完成、失败、中止或超时终态时", "中间增量使用 card update", "dws card finish --handle <handle>"),
 		Validate: requireExplicitCardProfile, ResultCall: updateCardResult,
 	})
@@ -349,6 +356,36 @@ func requireExplicitCardProfile(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func resolveCardProfileScope(cmd *cobra.Command) (delivery.ProfileScope, error) {
+	flag := cmd.Flag("profile")
+	if flag == nil {
+		return delivery.ProfileScope{}, fmt.Errorf("card command requires the global --profile flag")
+	}
+	selector := strings.TrimSpace(flag.Value.String())
+	if selector == "" {
+		return delivery.ProfileScope{}, fmt.Errorf("card command requires an explicit --profile")
+	}
+	if runtimeSelector := strings.TrimSpace(profilectx.Get()); runtimeSelector != "" {
+		selector = runtimeSelector
+	}
+	identity := cardCurrentProfileIdentity()
+	if strings.TrimSpace(identity.CorpID) == "" || strings.TrimSpace(identity.UserID) == "" {
+		return delivery.ProfileScope{}, fmt.Errorf("card command requires --profile to resolve to one exact corpId:userId identity")
+	}
+	canonicalSelector := strings.TrimSpace(identity.CorpID) + ":" + strings.TrimSpace(identity.UserID)
+	scope := delivery.ProfileScope{Selector: canonicalSelector, CorpID: strings.TrimSpace(identity.CorpID), UserID: strings.TrimSpace(identity.UserID), Environment: cardDeliveryEnvironment()}
+	return scope, nil
+}
+
+func cardDeliveryEnvironment() string {
+	endpoint := strings.TrimSpace(os.Getenv("DINGTALK_IM_MCP_URL"))
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(config.GetMCPBaseURL())
+	}
+	sum := sha256.Sum256([]byte(endpoint))
+	return fmt.Sprintf("im:%x", sum[:8])
+}
+
 func localContract(name, cliPath, description, useWhen, avoidWhen, example string) LeafContract {
 	return LeafContract{Description: description, Result: cardResultSpec, Interface: &contract.InterfaceSpec{Mode: contract.InterfaceModeLocal, Availability: contract.InterfaceAvailable, Reason: "implemented by the embedded DWS A2UI authoring runtime"}, Selection: contract.SelectionSpec{AgentSummary: description, UseWhen: []string{useWhen}, AvoidWhen: []string{avoidWhen}, Examples: []string{example}}, Identity: contract.ToolIdentitySpec{ProductID: "card", Name: name, CanonicalPath: "card." + name, CLIPath: cliPath, PrimaryCLIPath: cliPath}}
 }
@@ -376,6 +413,14 @@ func loadMessages(path string) ([]map[string]any, error) {
 	return protocol.ParseMessages(bytes.NewReader(raw))
 }
 
+func loadSnapshot(path string) (state.Surface, error) {
+	raw, err := readCardFile(path)
+	if err != nil {
+		return state.Surface{}, err
+	}
+	return state.ParseSnapshot(bytes.NewReader(raw))
+}
+
 func loadAndValidate(path, mode string) ([]map[string]any, protocol.Validation, error) {
 	messages, err := loadMessages(path)
 	if err != nil {
@@ -401,6 +446,11 @@ func composeResult(_ *cobra.Command, _ string, args map[string]any) (output.Comm
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return nil, fmt.Errorf("invalid CompositionSpec: %w", err)
 	}
+	effectiveRecipe, err := authoring.ResolveRecipe(spec)
+	if err != nil {
+		return nil, err
+	}
+	spec.Recipe = effectiveRecipe
 	messages, err := authoring.Compile(spec)
 	if err != nil {
 		return nil, err
@@ -438,9 +488,16 @@ func previewResult(_ *cobra.Command, _ string, args map[string]any) (output.Comm
 }
 
 func sendCardResult(cmd *cobra.Command, _ string, args map[string]any) (output.CommandResult, error) {
+	profile, err := resolveCardProfileScope(cmd)
+	if err != nil {
+		return nil, err
+	}
 	messages, validation, err := loadAndValidate(fmt.Sprint(args["file"]), "create")
 	if err != nil {
 		return nil, err
+	}
+	if err := protocol.ValidateDeliveryResources(messages); err != nil {
+		return nil, apperrors.NewValidation(err.Error())
 	}
 	surface, err := state.Reduce(state.Surface{}, messages)
 	if err != nil {
@@ -494,7 +551,7 @@ func sendCardResult(cmd *cobra.Command, _ string, args map[string]any) (output.C
 		bizID = bizCardID
 	}
 	handle := "a2ui-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	record := delivery.Record{Handle: handle, BizID: bizID, ConversationID: conversationID, ReceiverID: receiverID, Surface: surface, FlowStatus: defaultA2UIFlowStatus, Revision: 1}
+	record := delivery.Record{Handle: handle, BizID: bizID, Profile: profile, ConversationID: conversationID, ReceiverID: receiverID, Surface: surface, FlowStatus: defaultA2UIFlowStatus, Revision: 1}
 	if err := (delivery.Store{Dir: delivery.DefaultDir()}).Save(record); err != nil {
 		return nil, fmt.Errorf("card sent but local ledger save failed for bizId %s: %w", bizID, err)
 	}
@@ -503,59 +560,119 @@ func sendCardResult(cmd *cobra.Command, _ string, args map[string]any) (output.C
 
 func updateCardResult(cmd *cobra.Command, _ string, args map[string]any) (output.CommandResult, error) {
 	store := delivery.Store{Dir: delivery.DefaultDir()}
-	record, err := store.Load(fmt.Sprint(args["handle"]))
+	handle := strings.TrimSpace(fmt.Sprint(args["handle"]))
+	profile, err := resolveCardProfileScope(cmd)
 	if err != nil {
 		return nil, err
 	}
-	file := strings.TrimSpace(fmt.Sprint(args["file"]))
-	var messages []map[string]any
-	if file != "" && file != "<nil>" {
-		messages, err = loadMessages(file)
+	var result output.CommandResult
+	err = store.WithHandleLock(handle, func() error {
+		record, err := store.Load(handle)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-	mode := fmt.Sprint(args["inputMode"])
-	if mode == "snapshot" {
-		desired, err := state.Reduce(state.Surface{}, messages)
+		if err := record.ValidateUpdateScope(profile); err != nil {
+			return err
+		}
+		baseRevision := record.Revision
+		registry, err := protocol.Load()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		messages, err = state.Diff(record.Surface, desired)
+		file := strings.TrimSpace(fmt.Sprint(args["file"]))
+		mode := fmt.Sprint(args["inputMode"])
+		var messages []map[string]any
+		if file != "" && file != "<nil>" {
+			if mode == "snapshot" {
+				desired, err := loadSnapshot(file)
+				if err != nil {
+					return err
+				}
+				if desired.CatalogID == "" {
+					desired.CatalogID = record.Surface.CatalogID
+				}
+				if desired.CatalogID != record.Surface.CatalogID {
+					return fmt.Errorf("snapshot catalogId %q does not match handle catalogId %q", desired.CatalogID, record.Surface.CatalogID)
+				}
+				snapshotValidation := registry.Validate(snapshotCreateMessages(desired), "create")
+				if !snapshotValidation.Valid {
+					return fmt.Errorf("A2UI snapshot validation failed with %d diagnostic(s): %+v", len(snapshotValidation.Diagnostics), snapshotValidation.Diagnostics)
+				}
+				messages, err = state.Diff(record.Surface, desired)
+				if err != nil {
+					return err
+				}
+			} else {
+				messages, err = loadMessages(file)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		validation := registry.Validate(messages, "update")
+		if !validation.Valid {
+			return fmt.Errorf("A2UI update validation failed with %d diagnostic(s): %+v", len(validation.Diagnostics), validation.Diagnostics)
+		}
+		if err := protocol.ValidateDeliveryResources(messages); err != nil {
+			return apperrors.NewValidation(err.Error())
+		}
+		next, err := state.Reduce(record.Surface, messages)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-	registry, err := protocol.Load()
+		if next.SurfaceID == "" {
+			return fmt.Errorf("deleteSurface is not supported by stateful card update")
+		}
+		finalValidation := registry.Validate(snapshotCreateMessages(next), "create")
+		if !finalValidation.Valid {
+			return fmt.Errorf("A2UI update would leave an invalid surface with %d diagnostic(s): %+v", len(finalValidation.Diagnostics), finalValidation.Diagnostics)
+		}
+		wire, err := protocol.MarshalWire(messages)
+		if err != nil {
+			return err
+		}
+		flowStatus := fmt.Sprint(args["flowStatus"])
+		params := map[string]any{"requestId": uuid.NewString(), "bizId": record.BizID, "flowStatus": flowStatus, "a2uiMessages": wire, "a2uiAnnotations": []any{}}
+		if GetCaller() != nil && GetCaller().DryRun() {
+			result = output.Success(map[string]any{"dryRun": true, "executed": false, "handle": record.Handle, "baseRevision": record.Revision, "validation": validation, "request": params}, output.WithDryRun())
+			return nil
+		}
+		if len(messages) == 0 && flowStatus == record.FlowStatus {
+			result = output.Success(map[string]any{"handle": record.Handle, "bizId": record.BizID, "flowStatus": flowStatus, "revision": record.Revision, "noOp": true, "validation": validation})
+			return nil
+		}
+		response, err := CallMCPToolDataOnServer(cmd.Context(), "im", "update_a2ui_card", params)
+		if err != nil {
+			return err
+		}
+		record.Surface, record.FlowStatus, record.Revision = next, flowStatus, baseRevision+1
+		if err := store.SaveIfRevision(record, baseRevision); err != nil {
+			return fmt.Errorf("card updated but local ledger compare-and-save failed: %w", err)
+		}
+		result = output.Success(map[string]any{"handle": record.Handle, "bizId": record.BizID, "flowStatus": flowStatus, "revision": record.Revision, "validation": validation, "response": response})
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	validation := registry.Validate(messages, "update")
-	if !validation.Valid {
-		return nil, fmt.Errorf("A2UI update validation failed with %d diagnostic(s): %+v", len(validation.Diagnostics), validation.Diagnostics)
+	return result, nil
+}
+
+func snapshotCreateMessages(surface state.Surface) []map[string]any {
+	ids := make([]string, 0, len(surface.Components))
+	for id := range surface.Components {
+		ids = append(ids, id)
 	}
-	next, err := state.Reduce(record.Surface, messages)
-	if err != nil {
-		return nil, err
+	sort.Strings(ids)
+	components := make([]any, 0, len(ids))
+	for _, id := range ids {
+		components = append(components, surface.Components[id])
 	}
-	wire, err := protocol.MarshalWire(messages)
-	if err != nil {
-		return nil, err
+	return []map[string]any{
+		{"version": "v1.0", "createSurface": map[string]any{"surfaceId": surface.SurfaceID, "catalogId": surface.CatalogID}},
+		{"version": "v1.0", "updateDataModel": map[string]any{"surfaceId": surface.SurfaceID, "path": "/", "value": surface.Data}},
+		{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": surface.SurfaceID, "components": components}},
 	}
-	flowStatus := fmt.Sprint(args["flowStatus"])
-	params := map[string]any{"requestId": uuid.NewString(), "bizId": record.BizID, "flowStatus": flowStatus, "a2uiMessages": wire, "a2uiAnnotations": []any{}}
-	if GetCaller() != nil && GetCaller().DryRun() {
-		return output.Success(map[string]any{"dryRun": true, "executed": false, "handle": record.Handle, "baseRevision": record.Revision, "validation": validation, "request": params}, output.WithDryRun()), nil
-	}
-	response, err := CallMCPToolDataOnServer(cmd.Context(), "im", "update_a2ui_card", params)
-	if err != nil {
-		return nil, err
-	}
-	record.Surface, record.FlowStatus, record.Revision = next, flowStatus, record.Revision+1
-	if err := store.Save(record); err != nil {
-		return nil, fmt.Errorf("card updated but local ledger save failed: %w", err)
-	}
-	return output.Success(map[string]any{"handle": record.Handle, "bizId": record.BizID, "flowStatus": flowStatus, "revision": record.Revision, "validation": validation, "response": response}), nil
 }
 
 func defaultSummary(args map[string]any, surface state.Surface) string {

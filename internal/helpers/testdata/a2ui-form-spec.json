@@ -1,0 +1,11 @@
+{
+  "recipe": "form",
+  "surfaceId": "dws-local-form",
+  "title": "补充发布信息",
+  "subtitle": "提交后由 Agent 继续执行 · 示例流程",
+  "status": "待填写",
+  "body": "请补充本次发布说明并选择执行方式。提交前不会触发真实发布动作。",
+  "primaryCta": "提交并继续",
+  "secondaryCta": "取消",
+  "options": ["正常发布", "灰度发布", "仅验证"]
+}

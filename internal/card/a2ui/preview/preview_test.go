@@ -25,7 +25,7 @@ func TestRenderReferencePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(html)
-	for _, want := range []string{"reference_preview", "方案审批", "请检查发布范围", `data-component="Button"`, `type="radio"`, `class="FieldLabel">补充说明`, `placeholder="请输入说明"`, `class="FieldLabel">处理结果`} {
+	for _, want := range []string{"reference_preview", "方案审批", "请检查发布范围", `data-component="Button"`, `type="radio"`, `class="FieldLabel">审批意见（选填）`, `placeholder="补充判断依据或修改建议"`, `class="FieldLabel">处理结果`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("preview missing %q", want)
 		}
@@ -54,14 +54,20 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 	}
 	rendered := string(html)
 	for _, want := range []string{
-		`<textarea class="TextField" placeholder="请输入说明" data-binding-path="/form/comment">`,
+		`<textarea class="TextFieldControl" placeholder="补充判断依据或修改建议" data-binding-path="/form/comment">`,
 		`type="radio" name="choice" value="option_1" data-binding-path="/form/choice"`,
-		`<button type="button" class="ButtonControl default" data-event-name="secondary" data-surface-id="interactive-preview">`,
-		`<button type="button" class="ButtonControl primary" data-event-name="primary" data-surface-id="interactive-preview">`,
+		`<button type="button" class="ButtonControl default" data-event-name="approval_return" data-surface-id="interactive-preview">`,
+		`<button type="button" class="ButtonControl primary" data-event-name="approval_submit" data-surface-id="interactive-preview">`,
 		`id="interaction-result"`,
 		`new CustomEvent("dws-a2ui-preview-action"`,
 		`form:model.form??{}`,
 		`不发送真实请求`,
+		`new URLSearchParams(location.search).has("embed")`,
+		`.embed .notice{display:none}`,
+		`result.setAttribute("role","status")`,
+		`document.querySelectorAll('[data-component="ChoicePicker"]')`,
+		`group.setAttribute("role","radiogroup")`,
+		`class="ChoicePickerControl"`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("interactive preview missing %q", want)
@@ -71,6 +77,12 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 		if strings.Contains(rendered, forbidden) {
 			t.Errorf("interactive preview contains forbidden behavior %q", forbidden)
 		}
+	}
+	if strings.Contains(rendered, `<textarea class="TextField"`) {
+		t.Fatal("TextField component wrapper and native control must not share the same style class")
+	}
+	if strings.Contains(rendered, `<div class="ChoicePicker">`) {
+		t.Fatal("ChoicePicker component wrapper and internal control must not duplicate layout classes")
 	}
 }
 
@@ -116,6 +128,17 @@ func TestRenderRichInformationComponents(t *testing.T) {
 		`class="PanelContent" data-max-height="240"`, "<h3>数据口径</h3>",
 		`data-component="Link"`, `href="https://example.com/details"`, `data-component="Button"`, "<h2>核心结论</h2>",
 		"图片暂不可用", `image.naturalWidth<=1`,
+		`--space-2:8px`, `--space-3:12px`, `.Card>.Column{gap:var(--space-2)}`,
+		`[data-padding="12"]{padding:var(--space-3)}`,
+		`.CollapsiblePanel details{padding:0 var(--space-3)}`,
+		`.CollapsiblePanel summary::-webkit-details-marker{display:none}`,
+		`.CollapsiblePanel summary::before{width:8px;height:8px;flex:none;border-right:2px solid currentColor;border-bottom:2px solid currentColor;content:"";transform:rotate(-45deg);transform-origin:center}`,
+		`.CollapsiblePanel details[open]>summary::before{transform:rotate(45deg)}`,
+		`.PanelContent{position:relative;margin:0;padding:0;overflow:auto}`,
+		`data-component-id="details_content"`, `data-padding="12"`,
+		`.CollapsiblePanel.indented .PanelContent{padding-left:calc(var(--space-2) + 1px)}`,
+		`.CollapsiblePanel.indented .PanelContent::before{position:absolute;top:var(--space-3);bottom:var(--space-3);left:0;width:1px;border-radius:1px;background:#d9dde3;content:""}`,
+		`.CollapsiblePanel.reasoning{background:transparent}`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rich preview missing %q", want)
@@ -123,6 +146,17 @@ func TestRenderRichInformationComponents(t *testing.T) {
 	}
 	if strings.Contains(rendered, "<details open>") {
 		t.Fatal("CollapsiblePanel must honor the protocol default and start collapsed")
+	}
+	for _, forbidden := range []string{
+		`.CollapsiblePanel details[open]>summary{border-bottom:`,
+		`.CollapsiblePanel.indented .PanelContent{padding-left:var(--space-2);border-left:`,
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("rendered preview contains obsolete broken-border styling %q", forbidden)
+		}
+	}
+	if strings.Contains(rendered, "list-style-position:outside") {
+		t.Fatal("native outside disclosure marker can escape the panel inset")
 	}
 }
 
@@ -208,5 +242,100 @@ func TestRenderHonorsUnboundedPanelAndLargeLineLimit(t *testing.T) {
 	}
 	if strings.Contains(rendered, "max-height:0px") {
 		t.Fatal("maxHeight 0 means unlimited and must not collapse panel content")
+	}
+}
+
+func TestRenderProjectsPublicBoxModelAndImageVariants(t *testing.T) {
+	surface := state.Surface{
+		SurfaceID: "visual-contract-preview",
+		Components: map[string]map[string]any{
+			"root":    {"component": "Card", "child": "content", "padding": 0.0, "borderWidth": 0.0},
+			"content": {"component": "Column", "children": []any{"banner", "avatar"}, "gap": 16.0, "padding": 12.0, "backgroundColor": "#FFE8F3FF", "cornerRadius": 8.0, "borderWidth": 1.0, "borderColor": "#FFB7D8FF"},
+			"banner":  {"component": "Image", "url": "https://example.com/banner.png", "variant": "header", "fit": "cover"},
+			"avatar":  {"component": "Image", "url": "https://example.com/avatar.png", "variant": "avatar", "fit": "cover"},
+		},
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(html)
+	for _, want := range []string{
+		`data-component-id="root" data-component="Card"`,
+		`style="padding:0px;border-width:0px"`,
+		`style="padding:12px;gap:16px;border-radius:8px;border-width:1px;background-color:#E8F3FFFF;border-color:#B7D8FFFF;border-style:solid"`,
+		`.ImageFrame.avatar{width:40px;height:40px;border-radius:50%}`,
+		`.ImageFrame.header{width:100%;height:200px}`,
+		`.ImageFrame>.Image{display:block;width:100%;height:100%;object-fit:cover}`,
+		`.Row>.Image{flex:none}`,
+		`.Row>.Image.smallFeature{width:96px}`,
+		`.Row>[data-weight="1"]{width:0}`,
+		`class="ImageFrame header cover"`,
+		`class="ImageFrame avatar cover"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("visual contract preview missing %q", want)
+		}
+	}
+	if strings.Contains(rendered, `}.Image{display:block;width:100%;height:100%;object-fit:cover}`) {
+		t.Fatal("Image component wrapper must not inherit native image height rules")
+	}
+}
+
+func TestRenderProjectsTextIconColorTypographyAndButtonShape(t *testing.T) {
+	surface := state.Surface{
+		SurfaceID: "visual-token-preview",
+		Components: map[string]map[string]any{
+			"root":         {"component": "Card", "child": "content"},
+			"content":      {"component": "Column", "children": []any{"title", "custom", "standalone", "action"}},
+			"title":        {"component": "Text", "text": "发布完成", "bold": true, "colorToken": "common_green1_color", "sizeToken": "common_h1_text_style__font_size", "icon": map[string]any{"name": "Check_L_outlined"}},
+			"custom":       {"component": "Text", "text": "自定义主题色", "customLightColor": "#123456", "customDarkColor": "#ABCDEF"},
+			"standalone":   {"component": "Icon", "name": "Search_L_outlined", "color": "blue"},
+			"action":       {"component": "Button", "child": "action_label", "variant": "primary", "action": map[string]any{"event": map[string]any{"name": "open", "context": map[string]any{"surfaceId": "visual-token-preview"}}}},
+			"action_label": {"component": "Text", "text": "查看详情", "icon": map[string]any{"name": "Search_L_outlined"}},
+		},
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(html)
+	for _, want := range []string{
+		`token-common_green1_color`,
+		`class="Text custom-color`,
+		`style="font-size:18px;-webkit-line-clamp:3"`,
+		`<span class="InlineIcon" aria-hidden="true"><svg viewBox="0 0 24 24"`,
+		`data-component="Icon"`,
+		` blue `,
+		`style="--text-light:#123456;--text-dark:#ABCDEF;color:var(--text-light);-webkit-line-clamp:3"`,
+		`.InlineIcon{display:inline-flex;width:16px;height:16px`,
+		`.Icon>.InlineIcon{width:20px;height:20px`,
+		`.ButtonControl{border-radius:999px`,
+		`.ButtonControl .Text{color:inherit}`,
+		`.Text.custom-color,.Icon.custom-color{color:var(--text-dark)!important}`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("visual token preview missing %q", want)
+		}
+	}
+	if strings.Contains(rendered, "✓") || strings.Contains(rendered, "🔍") {
+		t.Fatal("reference preview must use the icon system instead of Unicode glyph substitutes")
+	}
+}
+
+func TestRenderCardHeaderIncludesTrailingComponent(t *testing.T) {
+	surface := state.Surface{Components: map[string]map[string]any{
+		"root":   {"id": "root", "component": "Card", "child": "header"},
+		"header": {"id": "header", "component": "CardHeader", "title": "任务提醒", "theme": "blue", "trailing": "status"},
+		"status": {"id": "status", "component": "Tag", "text": "进行中", "theme": "orange"},
+	}}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`data-component="CardHeader"`, `data-component-id="status"`, "任务提醒", "进行中"} {
+		if !strings.Contains(string(html), want) {
+			t.Fatalf("preview missing %q", want)
+		}
 	}
 }

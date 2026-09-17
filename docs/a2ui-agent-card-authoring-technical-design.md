@@ -1,10 +1,10 @@
 # DWS A2UI Agent 卡片搭建与投递技术方案
 
-> 状态：Proposal
+> 状态：Implemented for local authoring and guarded delivery; external release and real-client acceptance remain gated
 >
 > 日期：2026-09-15
 >
-> 修订：对齐 card-docs@b9305f4 命令域设计；当前为方案交付，代码待实施。
+> 修订：对齐 card-docs@b9305f4 命令域设计，并同步当前分支的实现、Bugbot 修复与分层验收结果。
 >
 > 范围：在 `dingtalk-workspace-cli` 中建立面向 Agent 的 A2UI 卡片“发现、规划、组合、校验、预览、发送、更新”闭环，并把现有 A2UI 发送能力迁移到 `dws card ...`。
 
@@ -52,21 +52,23 @@ Agent 仍然负责理解回复内容、判断信息优先级和选择表达方�
 
 ### 2.2 现有 DWS 能力
 
-当前仓库没有 `dws card` 根命令。A2UI 原子能力位于：
+当前分支已经提供 `dws card` 根命令和完整本地作者工具链。旧 A2UI 原子能力仍以兼容命令保留，但已标记 deprecated：
 
 ```text
 dws chat message send-a2ui-card
 dws chat message update-a2ui-card
 ```
 
-现状只完成：
+旧命令只完成：
 
 - 校验 `--content` 是非空 JSON 字符串数组；
 - 生成 `requestId` / `bizCardId`；
 - 调用 `im.create_and_send_a2ui_card` / `im.update_a2ui_card`；
 - 透传 `a2uiMessages`、`a2uiAnnotations`、目标与 `flowStatus`。
 
-现状没有完成：
+上述缺口已由 `dws card protocol/catalog/block/recipe/guide/compose/build/lint/preview/send/update/finish/verify/list/show/doctor` 分层补齐；旧命令不再作为 Agent 默认选择。仍未完成且不得冒充通过的是：真实客户端多端视觉与 Action 回流、服务端 readback/远端 CAS、协议资产公开来源与许可证、以及卡片平台十套模板的公共可复现来源合同。
+
+原始兼容命令自身仍没有：
 
 - 完整消息 Schema 校验；
 - Catalog 与 common types 的引用解析；
@@ -486,9 +488,10 @@ Block 不是简单把几个组件粘在一起。每个 Block 必须声明：
 1. 第一屏先回答“这是什么、当前状态、最重要结论、下一步是什么”。
 2. 一张卡只有一个主标题和至多一个 primary Button。
 3. 核心结论不得放入默认收起的 CollapsiblePanel。
-4. 补充依据、长日志、过程说明优先折叠；结果和错误原因默认展开。
-5. 一个区块只承担一种信息角色；状态、正文、输入和操作不要混在同一 Row。
-6. Label/Value 至少有一种稳定层级差异：位置、字重、颜色或字号。
+4. `CollapsiblePanel.variant=indented` 的左侧细线是内容从属关系的缩进引导，不是容器边框；预览实现不得再叠加与其相接的展开态横线。引导线应在内容区内上下留出 `12px`，避免形成“缺右边和下边”的残缺边框错觉。若设计确实需要边框，必须使用四边完整的容器边框。
+5. 补充依据、长日志、过程说明优先折叠；结果和错误原因默认展开。
+6. 一个区块只承担一种信息角色；状态、正文、输入和操作不要混在同一 Row。
+7. Label/Value 至少有一种稳定层级差异：位置、字重、颜色或字号。
 
 ### 11.2 分组与布局
 
@@ -498,6 +501,10 @@ Block 不是简单把几个组件粘在一起。每个 Block 必须声明：
 4. 相邻内容属于同一语义区时缩小 gap；跨区块时扩大 gap 或使用 Divider。
 5. 图文项的图片必须服务于理解；没有真实图片时退化为纯文本项，不自动加入占位图。
 6. 文件区独立成组，不把文件 URL 混入正文。
+
+`image-text-item` 使用固定的紧凑合同：外层 `Row(align=center, gap=12)`，主信息放在 `Column(weight=1)`，辅助图片放在 `Image(variant=smallFeature)`；标题最多 2 行、摘要最多 3 行，图片默认关闭大图预览。公开 Image 合同将 `smallFeature` 映射为 `96×96np`，因此 Row 的自然高度应为 96np，文字列在这一高度内垂直居中。不得用 `Row.align=stretch` 声称左右等高：当前公开合同会把 Row 下的 stretch 按 start 处理。若真实端仍把图片外层保留为旧的 200np 高度，说明 Image variant 的 Nest/Renderer 修复尚未完整集成；此时必须删除缩略图并退化为紧凑纯文本项，不能依靠未公开的 height/width 字段绕过。
+
+日程、任务与轻提醒使用 `compact-notification-header`，默认结构为 `Card(padding=0) > Column(gap=0) > CardHeader(trailing=Tag) + Column(padding=8,gap=8)`。`CardHeader` 是完整头部区域，不能用孤立 Tag 替代；分类色由 header 的语义 theme 承担，trailing Tag 只表达短状态。空备注、空事实行和没有分组价值的 Divider 必须从 children 中删除。真实钉钉验证表明，正文 16np padding 会让短通知显得松散，而在宿主已有外层 inset 时再给整个 content 增加 12np 会形成重复留白；因此正文收敛为 8np，header 仍保持原生组件自己的边界。`Text.icon` 在尚未完成客户端接线时还会留下无效视觉预期，紧凑通知不能依赖图标来维持对齐和信息层级。
 
 ### 11.3 密度与操作
 
@@ -518,6 +525,27 @@ Block 不是简单把几个组件粘在一起。每个 Block 必须声明：
 ### 11.5 一期默认视觉规范与内容自适应
 
 主题选择属于 P2，但一期必须交付一套默认视觉规范：标题/摘要/正文/辅助信息的排版层级、区块内外间距、图片比例、列表对齐、主次操作与语义状态色，以及 light/dark 表现。规范由 Block 和编译器应用，具体数值只选锁定 Catalog 支持的字段和值，通过真实渲染后冻结；不能直接照搬网页 CSS。
+
+间距采用 4np 基线并服从锁定 Catalog 的默认合同，不由各 Recipe 自行发明数值：
+
+| 关系 | 默认值 | 使用规则 |
+|---|---:|---|
+| 紧密内容 | 4np | 同一事实的值与标签、标题与一句辅助说明 |
+| 同级区块 | 8np | Card 顶层 Column 的相邻 Block、Row 内同级控件；对应 Catalog 的顶层/横向默认 gap |
+| 容器内边距 | 12np | Card 默认 padding、有背景色的 Row/Column、折叠内容区；对应 Catalog 的 Card 默认 padding |
+| 强分组间隔 | 16np | 仅用于没有 Divider 的跨语义大区块；不能作为所有子节点的统一 gap |
+
+实现必须优先使用 `gap` 表达兄弟关系、使用 `padding` 表达容器边界。嵌套容器已有 12np 内边距时，内部从属缩进只增加 8np，禁止再叠加一层 12np 造成 24np 以上的无意左缩进。若组件没有公开的分边 margin/padding 能力，Recipe 应通过 Row/Column 层级表达，不能注入 CSS 或私有属性。reference preview 必须逐值呈现协议中的 `gap`/`padding`，不得用网页端硬编码数值覆盖消息合同；组件 wrapper 与内部原生控件必须使用不同的样式类，避免 TextField、ChoicePicker 等组件重复应用 border、padding 或 ARIA role。
+
+`CollapsiblePanel` 自身没有公开 `padding` 字段。需要内容内缩时，必须把正文包进 `Column(padding=12, gap=8)`，不能依赖 reference preview 或某一端 Renderer 暗中补白。面板标题已经承担区块标题角色，内部 Markdown 不得再以同名 `##/###` 开头；例如标题为“思考摘要”时，正文直接从步骤或说明开始。Header 与紧随其后的折叠区属于相邻同级区块，默认只保留 `8np` gap；除非 Divider 本身表达明确语义边界，否则禁止形成 `header → gap → Divider → gap → panel` 的双倍留白。
+
+容器背景默认透明。Recipe 未收到明确的用户视觉要求时，根 `Card` 显式使用 `backgroundColor=#00FFFFFF`，Row/Column 不配置 `backgroundColor` 或 `backgroundColorToken`；`CollapsiblePanel.variant=reasoning` 在 reference preview 中同样按透明背景呈现。只有用户明确要求色块，或状态、告警等语义确实需要独立 Surface 时，才配置背景，并同时保证文字对比度。Tag、Button 等组件自身的状态色不属于容器背景，继续服从其交互与语义合同。若真实端尚未实现 reasoning 的透明外观，该项应标为端侧能力缺口，不能由 Agent 下发未声明字段绕过。
+
+图片资源区分 reference preview 与真实投递合同。离线预览可以使用 `data:` 资源帮助结构审阅，但 `card send/update/finish` 中新增或修改的 `Image.url` 必须是带 host 的绝对 HTTPS URL；`data:`、`file:`、`blob:`、相对路径和明文 HTTP 均在远端调用前以 validation error 拒绝。内置可发送 fixture 不得把 base64 占位图当作生产图片；需要 Image 覆盖时使用经过可达性检查、允许跨域且来源可说明的 HTTPS 资源，无法提供可靠资源则省略 Image 并按纯文本 Block 降级。reference preview 的资源可见不等于真实客户端取图成功，真实端仍需截图确认。
+
+整卡宽度采用“语义策略与 Wire 能力分离”的合同。通知、日程和任务提醒使用 `notification` SurfacePolicy，产品期望下限为 `360px`；资讯、审批、表单和报告使用 `standard`；思考区、流式 Markdown 和反馈操作组成的 AI 卡片使用 `ai`。三类宽度模式均为 `content-adaptive`。真实 PC 宿主的 A2UI 宽卡目前由 `wideCardWidth` 决定，已知范围是 `320–640px`，因此 360px 是设计期望而不是当前 Wire 可强制的下限。所有 Recipe 必须在 320px 下可读，通过换行、纵向重排或折叠降级，禁止制造横向滚动；宽窗口下由宿主自动扩宽。
+
+这里的 `minWidth` 是 Agent 可查询的设计期望，不等于当前 A2UI Wire 字段；`observedHostMinWidth=320`、`observedHostMaxWidth=640` 才是当前 PC 宿主的已知运行边界。锁定的公开 `a2ui-catalog.json` 中，根 `Card` 没有整卡 `width/minWidth/maxWidth`，发送接口也没有 size 参数，因此编译器不得私自写字段或用不可见长文本撑宽。`dws card guide rules` 返回这些策略及 `enforcement=host-surface-required`；真实宽度由钉钉宿主 Surface 的 `wideCardWidth` 执行。待公开 Catalog 和多端 Renderer 同时支持整卡尺寸后，再以版本化字段落到 Wire。卡片平台 CLI 的 360px 效果图是设计参考宽度，不能单独证明线上宿主已实施最小宽度。
 
 Agent 先生成 InformationPlan，标记每项内容的优先级、事实来源、目标区块和操作意图；compose 返回内容到组件的映射。测试必须检查关键事实、错误原因和操作是否保留，不能为了套模板而静默丢弃信息。
 
@@ -1034,30 +1062,35 @@ make build
 
 ## 22. 需求追踪矩阵
 
-| 需求/设计项 | 实现落点 | 验收证据 | 状态 |
+状态只允许 `PASS / PARTIAL / FAIL / BLOCKED / NOT_RUN`。`PASS` 必须同时有实现、自动化证据及本项要求的实际环境证据；源码或 reference preview 通过不能替代真实端验收。
+
+| 需求/设计项 | 当前实现落点 | 当前证据与缺口 | 状态 |
 |---|---|---|---|
-| Agent 知道精确协议 | `protocol/` + `catalog get` | 47 组件可查，一期组件 compact/full 一致 | 待实施 |
-| Agent 知道使用语义 | `semantic/registry.json` + CLI 查询 | 每组件有 use/avoid/role/别名，无专用 Skill 也可发现 | 待实施 |
-| 内置 A2UI 模板 | `assets/recipes/` | 7 Recipe Golden、长内容和空值测试 | 待实施 |
-| 常用区块 | `assets/blocks/` | 15 Block Slot、展开树和交互合同测试 | 待实施 |
-| 合理组合策略 | `lint/design.go` + `guide rules` | 层级、密度、primary、折叠、分组诊断 | 待实施 |
-| 一期组件支持 | Protocol + Semantic Registry | 14 个真实组件 + RadioButton 别名映射 | 待实施 |
-| 美观效果 | Preview Adapter + Golden + Agent review | light/dark/窄宽度/长内容截图 | 待实施 |
-| 可靠交互 | `lint/interaction.go` + capability matrix | Action 分级、表单模拟、真实 trace | 待实施 |
-| 命令迁移到 `dws card` | `internal/helpers/card.go` + 兼容包装 | 新旧 payload parity、deprecated 输出 | 待实施 |
-| 同实例更新 | `delivery/receipt.go` | bizId/surface/profile/revision 漂移测试 | 待实施 |
-| P2 主题 | `assets/themes/` + compiler token | 主题 Golden、暗色与降级测试 | P2 |
-| 平台 CLI 模板转换为 A2UI | `assets/recipes/` + 来源与映射记录 | 源模板版本、完整 create/update 消息、双侧截图与差异评审 | 待实施 |
-| 一期默认视觉规范 | Block defaults + compiler + design lint | 排版/间距/状态色固定，light/dark 和窄宽度通过 | 待实施 |
-| 内容保真与自适应 | InformationPlan + guide + compiler | 内容到组件映射、关键事实无遗漏、超限和缺资源降级用例 | 待实施 |
-| 有界视觉修订 | preview + Agent 工作流 | 最多三轮默认预算、摘要匹配、简单布局降级与问题交付 | 待实施 |
-| 生成上下文闭包与锁文件 | `protocol/` + catalog get | 无外网引用、分页完整、循环不展开、版本冲突拒绝 | 待实施 |
-| 受管进程与授权 | runtimeclient/ipc/hostbroker | 原生 CLI、并发单实例、目标隔离、断连失效、各平台 | 待实施 |
-| 持久台账与回读 | ledger/evidence + show/verify | 新 shell 持 handle 续操作；丢回包不重新创建 | 待实施 |
-| 流式分批更新与状态归并 | composition + delivery + ledger | §13.5 路径快照、组件 upsert、节流、检查点、丢包乱序和输入保护 | 待实施；append 优化按能力开放 |
-| 监听就绪与事件归因 | events + send --watch | ready 前不发送、两卡不串流、重复去重、未归因留存 | 待实施 |
-| 图片实际进入模型上下文 | preview + Harness 产物适配 | 同 sourceHash、图片可读取、能识别预置视觉问题 | 待实施 |
-| 业务资产复用 | P2 template/capability/instance | 类型化提取、审核失效、发布一致性、白名单 Input/Update | P2 |
+| Agent 知道精确协议 | `internal/card/a2ui/protocol/` + `dws card protocol/catalog` | Catalog/Common Types 已内嵌并可查询；被 Go regexp 降级的 HostResultPath 与 `dt_actionBindingsV1` 已补显式语义校验，协议来源许可证和公开发布凭据仍未闭环 | PARTIAL |
+| Agent 知道使用语义 | `internal/card/a2ui/authoring/` + `guide`/`catalog` | 一期组件、Block、Recipe 可发现；尚未形成独立、版本化的语义 Registry 资产 | PARTIAL |
+| 内置 A2UI 模板 | `authoring` Recipe + `internal/helpers/testdata/a2ui-*-spec.json` | 7 个 Recipe、7 份 fixture 与 Gallery 已接入 preview acceptance，并产生 7/7 Recipe、14/14 组件收据；真实端视觉仍未验收 | PARTIAL |
+| 常用区块 | `internal/card/a2ui/authoring/authoring.go` | 15 个 Block 已注册并有定向测试；复杂 Slot/有序 Block 能力仍不足 | PARTIAL |
+| 合理组合策略 | `guide rules` + compose/lint + §11 | 已发布部分层级、间距、操作与折叠规则；仍缺全部规则的机器诊断与事实保真回执 | PARTIAL |
+| 一期组件支持 | `protocol` + `preview` + `authoring` | 14 类真实组件在 Gallery 可覆盖；RadioButton 为概念映射，真实多端能力仍未验收 | PARTIAL |
+| 美观效果 | `internal/card/a2ui/preview/` + Gallery | reference renderer 可进行结构和交互模拟；真实 PC/iOS/Android、字体、资源、暗色截图未完成 | PARTIAL |
+| 可靠交互 | preview 模拟 + Action 合同 | 本地输入、选择和按钮可模拟；真实事件回流、重复点击、失败、过期和最新 DataModel 未验收 | PARTIAL |
+| 命令迁移到 `dws card` | `internal/helpers/card.go` + `register_card.go` + `chat.go` | 新命令树为 Agent 默认路径；旧 chat 原子命令保留兼容并明确 deprecated。共享 Delivery/payload parity 尚未完成 | PARTIAL |
+| 写操作确认合同 | `internal/helpers/card.go` + Contract/Safety | send/update/finish 均声明 `user_required`；Runtime 无确认零写入、dry-run 放行，Help/Schema/Runtime truth 门禁一致 | PASS |
+| 同实例更新与作用域 | `internal/card/a2ui/delivery/store.go` + `state/state.go` | 台账冻结 profile selector、环境摘要和发送目标；update/finish fail-closed，handle 跨进程锁与本地 revision CAS 已覆盖；服务端无 revision CAS/回读能力，保证边界仍为本地 | PARTIAL |
+| Snapshot 增量编译与输入保护 | `state/state.go` + `card update --input-mode snapshot` | snapshot 独立严格解码、完整 create 校验、叶级 delta、全部公开输入控件绑定路径保护、数组 Pointer、删除拒绝与合并后 Surface 复验均已通过；`card show` 的 surface 可直接 round-trip 为 snapshot；真实端最新 DataModel 回读尚未具备 | PARTIAL |
+| 协议负例与更新完整性 | `protocol/protocol.go` + tests | `updateComponents.components` 必须为非空数组；HostResultPath 与 `dt_actionBindingsV1` 已补等价显式校验和正负例 | PASS |
+| P2 主题 | 目标：theme assets + compiler token | 尚无版本化主题资产和真实多端降级矩阵 | NOT_RUN |
+| 卡片平台模板转换为 A2UI | §27 + 当前本地审阅输入 | 已完成探索性逐区映射；公共仓库中尚无可复现的来源 manifest、合法来源资产和固定截图合同 | BLOCKED |
+| 一期默认视觉规范 | §11 + authoring defaults + preview | 4/8/12/16 节奏、透明容器、图标/文字/Button 默认值已实现部分；真实端未验收 | PARTIAL |
+| 内容保真与自适应 | CompositionSpec + compiler | 固定字段模式可生成 7 Recipe；尚无完整 InformationPlan、fact→component 回执和异构 Slot | PARTIAL |
+| 有界视觉修订 | preview + Agent 工作流 | 有 reference preview；没有版本化三轮修订 Harness 和模型评测记录 | NOT_RUN |
+| 生成上下文闭包与锁文件 | `protocol/` embed + digest | 资源可离线加载；缺公开 Bundle manifest、授权凭据和升级兼容报告 | PARTIAL |
+| 受管进程与授权 | 目标：runtimeclient/ipc/hostbroker | 尚未实施；当前命令直接走现有进程和 MCP 接缝 | NOT_RUN |
+| 持久台账与回读 | `delivery/store.go` + list/show/verify | 本地 ledger 可跨 shell 使用，并具 scope 校验、跨进程锁和 revision CAS；`verify` 仍只验证本地一致性，尚无服务端回读 | PARTIAL |
+| 流式分批更新与状态归并 | update/finish + state reducer | messages/snapshot 均可生成增量；用户输入路径保护、本地串行化、revision CAS 与 FINISH 检查点已覆盖；节流、乱序恢复、远端 CAS/回读未闭环 | PARTIAL |
+| 监听就绪与事件归因 | 目标：events + `send --watch` | 尚未实施 | NOT_RUN |
+| 图片实际进入模型上下文 | preview 输出 | 可生成 HTML；没有证明模型读取图片和识别预置视觉问题的 Harness 证据 | NOT_RUN |
+| 业务资产复用 | 目标：P2 template/capability/instance | 尚未实施 | NOT_RUN |
 
 ## 23. 一期完成定义
 
@@ -1089,11 +1122,11 @@ make build
 | §6.1 结果与退出码 | 适配当前 DWS envelope/Result 标准 | compact/full Result 一致；不新增 unknown outcome；测试统一错误映射 |
 | §6.2 自动 repair | 采用显式策略、可审计确定性修复 | 默认不改输入；规则版本、摘要可追踪；修复后重新校验 |
 
-本轮交付状态：参考代码已拉取、目标 HTML 与权威 MD 已核对、方案及追踪矩阵已更新。以上实施与运行测试均为待执行项，本轮文档调整不标记为实现 PASS。新增测试应落在对应模块的 `*_test.go`；安装/Harness/真实环境用例进入受控集成验收，避免普通 Go 测试出网。
+本轮交付状态：方案、实现、定向测试、本地 reference preview 与可执行验收矩阵已同批落地；实际状态以 §26、§29 和 §30 为准。新增测试落在对应模块的 `*_test.go`；安装/Harness/真实环境用例仍须进入受控集成验收，避免普通 Go 测试出网。
 
 ## 25. 可执行验收合同（整体评审后的交付门禁）
 
-本节把 §22 每项需求落到固定用例；与概述发生歧义时，以本节的范围、输入、断言和证据要求为验收依据。这里列出的脚本/测试落点均为待实施，不能因本文存在就认定已具备测试。测试实现须与对应功能同批交付。
+本节把 §22 每项需求落到固定用例；与概述发生歧义时，以本节的范围、输入、断言和证据要求为验收依据。其中 source 层、reference preview、Gallery 与本地交互脚本已实施，实际执行结果见 §30；尚未接入的 Harness、真实 Renderer、安装包和端侧用例仍是交付合同，不能因本文存在就认定 PASS。测试实现须与对应功能同批交付。
 
 ### 25.1 运行记录与结果判定
 
@@ -1171,7 +1204,7 @@ make build
 5. **真实环境层**：`--layer live --config <approved-targets-file>`，配置明确 profile、环境、群/单聊与最大卡片数；先展示计划，按本轮发送授权执行，保存真实回读与端侧证据。不得复用历史对话中的群 ID 作为默认目标。
 6. **汇总层**：`--layer report` 验证需求→case→执行→证据全部可追踪，任何一期 NOT_RUN/FAIL/BLOCKED 均不能输出整体 PASS。P2 单独汇总。
 
-上述脚本是拟新增测试工具，不是已存在的命令；实现提交必须让这些入口可运行并发布 Help。源码阶段可用测试二进制，但发布前必须用冻结版本的标准安装包重跑受影响集成与真实路径，记录实际 executable，不能沿用源码通过记录冒充包验收。
+当前 `scripts/card/acceptance.sh`、`render-recipe-gallery.sh` 与本地交互检查已实施；未实施的 Agent Harness、真实 Renderer、安装包及端侧 runner 仍不得作为已存在的命令宣传。源码阶段可用测试二进制，但发布前必须用冻结版本的标准安装包重跑受影响集成与真实路径，记录实际 executable，不能沿用源码通过记录冒充包验收。
 
 ### 25.6 需求覆盖与阶段退出
 
@@ -1197,7 +1230,9 @@ Phase 0A 先通过 AC01–04；Phase 0 增加 AC05–08、14 的传输部分、1
 
 ## 26. 2026-09-15 首批实施状态
 
-本批直接内嵌并锁定公开 A2UI Catalog/Common Types，完成纯 Go 协议加载、消息归一化、组件 Schema、根/引用/环/孤儿、初始绑定和部分设计规则校验；实现 14 个真实组件语义、`RadioButton` 概念映射、15 个 Block、7 个 Recipe、CompositionSpec 编译、确定性 wire、Surface reducer、snapshot diff 和 reference preview。公开命令已落到 `dws card`，包含 protocol/catalog/block/recipe/guide/compose/build/lint/preview/send/update/finish/verify/list/show/doctor；写命令要求显式 profile，send/update 通过 IM MCP，handle 台账固定 bizId、surfaceId、目标、revision 和 flowStatus。
+本节是当前工作树的实施快照，不是完成声明；最终状态以 §22、§29 和 §30 为准。本批已内嵌 A2UI Catalog/Common Types，完成纯 Go 协议加载、消息归一化、组件 Schema、根/引用/环/孤儿、初始绑定和部分设计规则校验；实现 14 类一期组件语义、`RadioButton` 概念映射、15 个 Block、7 个 Recipe、CompositionSpec 编译、确定性 wire、Surface reducer、snapshot diff 和 reference preview。公开命令已落到 `dws card`，包含 protocol/catalog/block/recipe/guide/compose/build/lint/preview/send/update/finish/verify/list/show/doctor；写命令要求显式 profile，send/update 通过 IM MCP，本地 handle 台账记录 bizId、surfaceId、目标、revision 和 flowStatus。
+
+上述“已实现”仍不等于完整生产就绪。先前识别的 profile/组织/环境作用域、handle 串行化与本地 CAS、严格 snapshot 解码、输入绑定保护、写操作确认、降级 pattern 语义检查和非空 `updateComponents.components` 均已在源码与自动化测试中关闭。2026-09-17 的最终复核又补齐：真实 `corpId:userId` 绑定、死亡进程锁恢复、全部公开输入控件绑定保护、数组 JSON Pointer、Snapshot 删除拒绝、增量合并后完整 Surface 复验、有效 Recipe 回执，以及 `task/schedule` 的真实 `CardHeader` 编译。仍未关闭的是协议资产公开来源/许可证、卡片平台十套来源合法化、服务端 readback/远端 CAS 和真实 PC/iOS/Android 视觉与 Action 回流，详见 §27–§30。
 
 快速反馈入口为：
 
@@ -1206,4 +1241,224 @@ scripts/card/acceptance.sh --layer source --out <dir>
 scripts/card/acceptance.sh --layer preview --binary <absolute-dws-path> --out <dir>
 ```
 
-`preview` 当前明确标识为 `reference_preview` / `structural`，不是钉钉同源 Renderer，也不产出真实客户端视觉 PASS。`verify` 当前只验证 `local_ledger` 一致性，并显式返回 `deliveryVerified=false`；服务端消息回读、客户端渲染、Action 事件回流、受管独立 Runtime/Host Broker、真实 Renderer 图片矩阵、Agent 21 题评测和正式发行安装仍未在本批完成，相关 AC 保持 NOT_RUN 或在缺少外部能力时标为 BLOCKED。旧 chat 路径仍兼容可用；其与新路径共享 Delivery Service 及 payload parity 的最终收敛尚需后续批次完成，不能把两个路径都可发送当作 AC07 已通过。
+`preview` 当前明确标识为 `reference_preview` / `structural`，不是钉钉同源 Renderer，也不产出真实客户端视觉 PASS。`verify` 当前只验证 `local_ledger` 一致性，并显式返回 `deliveryVerified=false`；服务端消息回读、客户端渲染、Action 事件回流、受管独立 Runtime/Host Broker、真实 Renderer 图片矩阵、Agent 21 题评测和正式发行安装仍未在本批完成，相关 AC 保持 NOT_RUN 或在缺少外部能力时标为 BLOCKED。旧 `chat message send-a2ui-card/update-a2ui-card` 路径仅作兼容入口并已 deprecated；Agent 默认应使用具备协议校验、同身份台账和合并后 Surface 复验的 `card send/update/finish`。两条路径尚未共享同一 Delivery Service，因此不能把兼容命令仍可发送当作 AC07 已通过。
+
+当前 `source` 层 A2UI 定向测试、`preview` acceptance、7 Recipe Gallery、Schema/generated policy 与 command surface 均已通过；preview 收据明确标为 `reference_preview`，不能替代钉钉客户端证据。仓库全量测试仍存在 A2UI 范围外的 JSONML 编译失败，且 merge-base `8cacb019` 同工具链可复现，因此记录为基线阻断而非本分支回归。
+
+## 27. 卡片平台 CLI 十套内置模板逐项还原审计（2026-09-16）
+
+### 27.1 权威基线与证据边界
+
+公共仓库当前没有一份满足来源、许可证、版本和可复现要求的卡片平台 CLI 十套模板视觉基线。此前人工提供的 HTML 与双栏审阅页只能作为探索性输入：它们没有进入本仓库、没有公共来源或发布收据，也没有固定 Renderer、逻辑宽度、DPR、主题、语言和逐图 hash，因此不能作为合并门禁、Golden 或 PASS 证据。本文只保留从该次审阅中得到的结构映射和能力差距，不保存内部仓库地址、个人工作区路径或临时输出路径。
+
+若后续要把左侧参考纳入可重复验收，必须先提供可公开消费且许可证明确的来源包，并在本仓库增加 reviewed manifest。manifest 至少固定 `sourceName/sourceVersion/sourceArtifactHash/recipeVersion/imageHash/frame/DPR/theme/locale/rendererVersion/license`；双栏生成器只消费 manifest 与仓库内 fixture，输出到调用者指定的 artifact 目录，运行产物不提交，也不在技术文档中记录机器本地路径。
+
+当前仓库内的 `scripts/card/recipe-gallery.html` 是 **DWS 自身 7 个 A2UI Recipe 的索引壳**，不是卡片平台十套模板的权威左侧基线；`scripts/card/render-recipe-gallery.sh` 负责从受评审 CompositionSpec 生成七张 reference preview，并输出 lint/compose/preview 收据。两类资产必须分开命名和验收，不能再用 DWS Gallery 证明跨产品 1:1 还原。
+
+### 27.2 十套模板到 A2UI 的逐区映射
+
+保持“7 个高频语义 Recipe”和“10 个来源模板 fixture”两个层次：来源模板数量不能反向迫使公共 Recipe 一一膨胀；同一 Recipe 可由不同 Slot/Block 组合形成不同来源模板。只有结构长期稳定、选择语义独特或交互合同不同，才新增公共 Recipe。
+
+| 来源模板 | A2UI 组织方式 | 本轮已保留 | 仍需真实 Renderer/能力补齐 |
+|---|---|---|---|
+| `information` | `Card` + 彩色 masthead + 内容 Column + `Tag` + header `Image` + 摘要 + 主 `Button` | 标题、来源、时间、标签、封面、核心摘要、详情操作及顺序 | 图片裁切、蓝色头部高度、字体度量和按钮高度需同宽截图比对 |
+| `schedule` | `CardHeader` + 状态 Tag + 会议事实 Column + 主 `Button` | 完整头部、主题、时间、地点、会议号、人数、详情 | 图标接线完成前采用纯文本事实行；整卡宽度仍需宿主 Surface 落实 360px 下限 |
+| `task-reminder` | `CardHeader` + 状态 Tag + 主标题 + 有值事实 + 主操作 + 来源 Link | 完整头部、任务、日期、详情、来源；空备注不占位 | label 固定轨道与链接前缀图标属于后续协议增强；整卡宽度仍需宿主 Surface 落实 360px 下限 |
+| `approval` | 标题/标签 + 事实列表 + 创建时间 + 双操作 + 两种禁用终态 | 报销事实、拒绝/同意事件、终态结构 | `Button.disabled` 当前协议只保证拦截、不保证端上变灰；必须以业务状态切换完整组件定义并三端验收 |
+| `document-permission-request` | 标题 + surfaced 申请区 + 权限状态 + 原因/风险提示 + 详情/双操作 | 信息层级、风险提示、权限值、操作意图 | 下拉权限选择必须用真实 `ChoicePicker` 绑定；外部协作者安全提示与业务权限服务联调 |
+| `reply-comment` | 文档标题 + surfaced 评论区 + Markdown + 双操作 | 评论者、上下文、@ 文案、查看/回复 | 卡片 Markdown 的 `atIdList`、逐链接/粗粒度点击边界及回复事件回流需真实验收 |
+| `profile` | header `Image` + avatar `Image` + 身份/任职事实 + 双操作 | 封面、头像、岗位、邮箱、电话、司龄、工号、查看/联系 | 参考中的头像压住封面属于 Stack/负位移能力；一期 Row/Column 无等价重叠布局，当前只能语义等价，不能声称像素等价 |
+| `rich-media` | header `Image` + `image-text-item`（居中 Row + 权重文字列 + smallFeature Image）+ 主操作 | 主图、栏目、标题、摘要、缩略图、入口 | 公开 `smallFeature=96×96np`；若真实端外层仍占旧 200np 高度，按 Block 合同退化为纯文本项，不得用私有尺寸字段硬调 |
+| `form` | TextField + dropdown/checkbox ChoicePicker + 提交 Button | 文本、单选、多选、绑定路径和统一提交 | 一期优先组件没有 DatePicker/DateTimePicker；用 TextField 只能保留字段意图，不能冒充原生日期交互；多选 DataModel 数组与本地模拟器也要补全 |
+| `ai-streaming` | 状态 Text + Markdown 内容 + Divider + 进度/反馈 action Row | done 状态内容、生成进度说明、复制/赞/踩动作槽 | pending/writing/done 必须用同 Surface 稳定 ID 增量更新；`textEffect=shimmer` 仅部分端生效；反馈图标及回流需端上验收 |
+
+### 27.3 本轮暴露的当前实现缺口
+
+1. **来源资产未版本化。** 现有 A2UI 画廊只覆盖 7 个抽象 Recipe，未绑定卡片平台 10 个来源模板的 hash、组件区域和差异清单，导致之前左图取错仍能“通过”。
+2. **CompositionSpec 表达力不足。** 当前 `Spec` 以固定 `title/subtitle/body/image/metrics/highlights/file/details/actions/options` 为主，无法表达彩色 masthead、任意事实行、两种图片尺寸、评论/权限 surfaced 区、独立终态、多个异构表单字段和流式反馈栏。Agent 被迫把结构压进 Markdown，视觉层次随即丢失。
+3. **Recipe 与 fixture 混淆。** 来源模板应是评测 fixture/转换样板，公共 Recipe 是长期稳定的信息与交互模式。不能因为来源有 10 张就注册 10 个近义 Recipe，也不能用 7 个通用示例替代来源模板逐项验收。
+4. **reference renderer 丢公开字段。** 修正前没有投影 Row/Column/Card 的 `backgroundColor`、`borderWidth`、`borderColor`，Image 的 `icon/avatar/smallFeature/mediumFeature/largeFeature/header` 也都画成统一 200px 高，导致合法 A2UI 的本地效果被错误压平。本轮已在通用渲染层补上安全的 box-model inline projection、A2UI `#AARRGGBB` 到 CSS `#RRGGBBAA` 转换和公开 Image.variant 几何；没有按模板 ID 注入 CSS。
+5. **图标合同未闭环。** 来源中的日程、地点、会议、人员、文档、评论、电话和反馈图标必须映射到协议公开 `Text.icon`/`Icon` 以及真实图标目录。参考页临时字形只用于暴露位置，不能进入版本化 fixture 或发布 Recipe。
+6. **表单控件族不足。** `TextField + ChoicePicker` 能覆盖本期指定组件，但无法一比一表达来源表单的日期、日期时间和复选框单控件。若一期范围不扩展组件，验收结论只能是“字段与提交语义等价”，不是“交互一比一”。
+7. **状态与交互视觉不能靠 CSS 推断。** `Button.disabled` 的公开说明明确指出端上可能不改变视觉；终态应由 update 下发明确的按钮/状态组件定义。所有操作还要验证 event name、最新 DataModel context、重复点击、失败、过期和同实例反馈。
+8. **缺少可比较截图合同。** 当前右图是 reference renderer HTML，左图是另一 Renderer 的 PNG；未绑定同一逻辑 frame、DPR、字体、图片加载结果和 Renderer 版本，因此只能做逐区结构审阅，不能执行像素阈值或宣称 1:1 PASS。
+
+### 27.4 后续统一优化设计
+
+#### P0：先让“还原”可验证
+
+- 新增 `card template parity` 的只读/本地验收资产层，输入为来源 manifest + 10 个来源 PNG + 对应 A2UI fixture；输出每个视觉区的 `exact / semantic / composed / degraded / blocked` 映射、lint 收据、预览收据和差异报告。
+- 来源 manifest 固定 `sourceRepo/sourceCommit/sourceArtifactHash/recipeVersion/imageHash/frame/DPR/theme/locale/rendererVersion`；任一项变化使旧视觉证据失效。
+- 为 10 个 fixture 固定区域清单，区域缺失直接失败，不能用整图相似度掩盖：masthead、标题、元数据、主图、摘要、事实行、内容面、输入区、状态、操作区、footer。
+- 双栏页必须直接消费 manifest，不再手工选择左图；`data-recipe` 与右侧 fixture 一对一，缺一项或多一项均失败。
+- 状态枚举使用 `NOT_RUN/PASS/FAIL/BLOCKED/NOT_COMPARABLE`。协议 lint 通过只证明结构合法；reference preview 通过只证明本地可读；真实 PC/iOS/Android 才能关闭视觉与交互项。
+
+#### P1：提升 Agent 可组合表达力
+
+- 把 CompositionSpec 从“固定长表单”升级为 `InformationPlan + ordered blocks`：每个事实带稳定 `factId`、优先级、来源、目标 Block、是否可折叠和超限策略；编译回执返回 fact→component ID 映射。
+- 引入类型化 Slot，而不是开放任意组件 JSON：`masthead`、`factRows`、`media`（header/avatar/feature）、`contentSurface`、`commentContext`、`permissionRequest`、`formFields`、`streamStatus`、`feedbackActions`、`terminalActions`。
+- 公共 Recipe 仍保持少而稳定；将 10 个来源模板实现为由 Slot/Block 组合生成的受评审样板。只有 schedule、approval、form、ai-streaming 等确有独特交互合同的模式才拥有专门编译策略。
+- 编译器统一 4/8/12/16px 节奏：同组 8、相关组 12、章节 16；gap 归后继关系，容器 padding 只表达边界；根卡片选择 padding 0 时必须由每个一级内容区显式拥有 12/16 inset，避免全幅 masthead/hero 与正文错位。
+- 图片 Slot 声明语义 variant、裁切、alt、预览开关和失败降级；公开 variant 无法满足 64px 缩略图或头像叠层时返回可审阅降级，不注入私有宽高/负 margin。
+- 表单字段按真实控件能力建模；Date/DateTime 不得静默降级成普通 TextField。若组件仍不在一期支持集，guide 必须返回限制和替代交互，而不是生成外观相似但行为错误的控件。
+- 流式卡固定 Surface 与组件 ID：pending 创建稳定骨架，writing 只更新路径快照/必要状态组件，done 更新终态与反馈区；输入控件绑定路径永不被正文批次覆盖。
+
+#### P1：补齐 reference renderer，但不把它做成私有客户端
+
+- 只实现 Catalog 已公开且可确定模拟的视觉字段；每项都有协议夹具和 DOM 断言。禁止按 Recipe/template ID 写 CSS。
+- 补 `Text.icon`/`Icon` 的目录驱动预览、ChoicePicker 数组选择与 dropdown/chips 形态、Text 自定义明暗色、Divider 宽度/颜色、Image 加载/crop 证据；未知 token/图标显示明确占位和诊断。2026-09-16 已完成第一批图标、文字颜色/字号与按钮视觉 token；ChoicePicker 形态、Divider 完整投影及未知项诊断仍按本项继续推进。
+- reference renderer 输出 manifest，记录协议 bundle、输入摘要、逻辑宽度、主题、资源成功/失败和模拟交互范围。它继续标识 `reference_preview`，不得升级为客户端视觉证据。
+
+#### P2：真实端像素与交互收口
+
+- 使用同一运行数据在 PC/iOS/Android 截图；按区域做几何/像素 diff，图片和字体异步稳定后再取证。只对同 Renderer/version/frame/DPR/theme/locale 的证据启用像素阈值。
+- 对所有按钮、链接、选择器、输入和流式反馈执行真实事件回流：最新表单值、幂等、失败恢复、过期、权限、同实例 update 和最终状态回读。
+- 视觉差异由设计/产品逐项确认；协议本身无法表达的部分要么扩展公开协议并完成端实现，要么保留 `degraded/blocked`，不能通过修改 Golden 消除。
+
+### 27.5 本轮与后续验收矩阵
+
+| 项目 | 当前结果 | 证据/通过标准 |
+|---|---|---|
+| 来源模板枚举 | BLOCKED | 公共仓库内缺少许可证明确、版本固定且可复现的十套来源 manifest |
+| 左图真实性 | BLOCKED | 未提交公共来源资产、逐图 hash、Renderer/version/frame/DPR/theme/locale 收据 |
+| 十套 A2UI 结构合法 | NOT_RUN（可复现门禁） | 探索性运行结果不进入最终 PASS；需将十套 fixture 与来源 manifest 纳入仓库命令后重跑 |
+| box model/Image variant 本地投影 | PASS（源码层） | `go test ./internal/card/a2ui/preview -count=1`；新增测试覆盖透明根 inset、颜色/边框、8 位色转换、header/avatar variant |
+| 内容/层级/操作意图 | PARTIAL | 已留下逐区人工映射；尚未固化为机器 manifest 和事实→组件断言 |
+| 与卡片平台参考图像素 1:1 | NOT_COMPARABLE | 两侧 Renderer/字体/图片稳定条件未绑定；profile 重叠、form 日期控件等存在公开能力差异 |
+| 真实钉钉视觉 | NOT_RUN | 需要冻结版本的 PC/iOS/Android 同输入截图 |
+| 真实交互与流式更新 | NOT_RUN | 需要 Action 回流、同实例 update、三态流式和最新 DataModel 证据 |
+
+因此，本轮只能确认“结构映射已记录、reference renderer 的部分通用失真根因已有源码修复”；不能确认来源基线已经公共化、十套转换已进入可复现门禁，更不能确认真实客户端像素一比一。后续必须先完成 P0 比较合同，再按 P1 解决协议/Composition 表达缺口，最后以 P2 真实端证据关闭 1:1 与可靠交互验收。
+
+### 27.6 图标、文字与按钮视觉 token 收口（2026-09-16）
+
+本轮遵循“消息协议能力”和“reference renderer 外观默认值”分权，不把本地 CSS 能做到的事情伪装成 Agent 可下发能力：
+
+| 视觉项 | 协议事实 | 本轮决策 | 约束与降级 |
+|---|---|---|---|
+| 图标 | `Text.icon` 支持注册名称或明暗图片 URL；独立 `Icon.name` 仅允许公共 `IconName` 清单 | 同一套 1.8px 圆角描边 SVG；正文前置图标 16px、caption 14px、标题 18px、独立 Icon 20px，文字间距 6px；图标继承语义文字色 | 不再用 Unicode/Emoji 冒充系统图标；未知注册名称在本地先用中性时钟形占位，真实图形仍由宿主图标目录决定，后续补显式诊断 |
+| 文字颜色 | `colorToken` > `customLightColor/customDarkColor` > `color`，具体 token 色值由宿主主题解析 | reference renderer 为一级/二级/三级/禁用、链接/主题、成功/警告/危险 token 提供稳定明暗近似值；完整支持 8 个 `color` 档位和自定义明暗色切换 | 本地色值是可读性近似，不是宿主 token 的权威 RGB；消息 fixture 优先写语义 token，不把十六进制值散落到模板 |
+| 字号 | `sizeToken` 优先于 `variant`，宿主负责原生字号/行高 | 本地映射公共说明列出的 10 个原生字号 token；标题/正文/动作/说明形成 22/20/18/16/15/13/12/11px 可辨层级 | 本地 px 只服务快速结构审阅；真实多端字体度量必须截图验收 |
+| 按钮圆角 | 公共 `Button` 没有 `cornerRadius`；只有 `default/primary/borderless` 外观提示 | reference renderer 统一使用胶囊圆角 `999px`，44px 最小触控高度，保留 primary/default/borderless 的 hover、focus、active、disabled 状态 | Agent 不得生成不存在的按钮圆角字段；若未来要求业务可选圆角，必须先扩公开协议和端实现 |
+
+排版规则沿用 4/8/12/16px 节奏：图标与同一行文字属于紧密组使用 6px 光学间距；按钮是“小控件”因此可使用胶囊形，Card 与内容 Surface 仍保持 12–16px 圆角，不扩散为全局药丸化。主要文字使用 `common_level1_base_color`，元数据使用 `common_level2_base_color`，弱说明使用 `common_level3_base_color`，交互强调使用 `common_link_color` 或主题主色；颜色不得只为“好看”而脱离成功、警告、危险、链接等语义。
+
+十套来源 fixture 已移除 `◷/⌖/⊞/♙/♟/▣/◌/ⓘ/⌕/↗/▢/♧/♤/✓/×` 等替代字形，改用 `Text.icon`。日程事实、文档/评论上下文、审批动作、个人资料操作、外链和流式反馈均复用同一图标渲染路径；按钮标签使用 `common_action_text_style__font_size`，主按钮标签用白色 token，普通按钮用一级文字 token。
+
+本轮源码验收：
+
+| 验收项 | 结果 | 证据与通过标准 |
+|---|---|---|
+| 图标尺寸与统一风格 | PASS（reference renderer） | `TestRenderProjectsTextIconColorTypographyAndButtonShape` 断言 SVG 图标、14/16/18/20px 尺寸规则及无 Unicode 图标替代 |
+| 文字 token 与明暗色 | PASS（reference renderer） | 同一测试断言 `colorToken`、`sizeToken`、`customLightColor/customDarkColor` 投影；`go test ./internal/card/a2ui/preview -count=1` 通过 |
+| 按钮圆角与状态 | PASS（reference renderer） | 统一 `border-radius:999px`、44px 触控高度及 hover/focus/active/disabled CSS；不新增非法协议字段 |
+| 十套 A2UI 消息协议 | NOT_RUN（可复现门禁） | 十套来源 fixture/manifest 尚未成为仓库资产；此前本地结果仅作探索记录 |
+| 七套内置 Recipe Gallery | PASS（reference renderer） | `render-recipe-gallery.sh` 生成 7/7 reference preview 并检查 14 类组件；脚本、HTML 与七份 fixture 已接入 `acceptance.sh --layer preview` |
+| 代表卡片视觉抽查 | NOT_RUN（正式证据） | 需要仓库命令输出 manifest，并记录固定 frame/theme/font/resource 状态；人工浏览器快照不能单独形成 PASS |
+| 窄宽布局 | PARTIAL | reference renderer 有定向 DOM/CSS 测试；仍需把 7 Recipe 固定视口无溢出检查接入自动化入口 |
+| 与真实钉钉端 token/图标一致 | NOT_RUN | 仍需冻结 PC/iOS/Android Renderer 版本及同输入截图；本地预览不得替代该证据 |
+
+全量截图还发现并修复一处通用渲染缺陷：组件外层 `<section class="Image">` 与原生 `<img class="Image">` 复用了类名，旧 `.Image{height:100%}` 会同时拉伸外层，造成 profile 大段空白、rich-media 后续内容看似消失。当前原生图片规则限定为 `.ImageFrame>.Image`，Row 内固定尺寸图片显式占有 24/40/96/160px 轨道，权重内容列允许收缩；对应 DOM 断言防止该选择器回归。远程图片能否加载仍是资源/网络证据，不能由无横向溢出替代。
+
+设计检测执行 `impeccable detect` 扫描双栏页与十个预览，当前环境因缺少 `htmlparser2/css-select/css-tree/domutils` 降级为正则模式，报告 10 条同类 `flat-type-hierarchy` WARNING。该告警来自每个独立 HTML 都内嵌完整字号 token 映射（11–22px），并不证明单张卡同时使用全部档位；但也不能据此宣布检测完全干净。后续可让 renderer 仅输出本消息实际使用的 token CSS，再用完整 parser/计算样式重跑对比度和字号层级检查。
+
+当前验证事实为：`internal/card/a2ui/...` 与 card focused helper tests 通过；`scripts/card/acceptance.sh --layer all` 通过，并实际执行 7 Recipe Gallery（7/7 Recipe、14/14 组件）及本地交互检查；Schema Catalog、generated drift、command surface 与开源资产静态扫描通过。完整 `go test ./...` 未通过：`internal/helpers/doc/doc_jsonml_validate_v2_test.go` 引用未定义的 `checkTypeV2`，同一 Go 工具链在 merge-base `8cacb01951d2567b2c0466d14cb6c5c9d0267a68` 可复现；本次全量运行还出现 Keychain 超时、Go 1.27 错误文本断言、JSONML 旧 fixture、minutes 深度限制和缺少 `gh` 等 A2UI 范围外失败；后者只记为当前环境/仓库全量结果，未经 merge-base 逐项复现不声称已证明为基线。这些失败路径均不在本批 diff 内，本批不越界修改。真实钉钉端、服务端回读和三端视觉/交互仍按各自条目保持 PARTIAL/NOT_RUN/BLOCKED，不得被本地 acceptance 替代。
+
+## 28. 文件变更、必要性与开源落点
+
+本清单覆盖本功能分支相对基线的全部功能文件和当前拟新增的 Gallery/fixture/跨平台锁文件；最终数量以 `git diff --name-status <merge-base>` 为准，避免文档中的手工计数漂移。状态含义：`REQUIRED` 表示本功能不可缺少；`REQUIRED_FIX` 表示必要但存在 §29 阻断问题；`CONDITIONAL` 表示只有正式接入文档/验收/CI 后才应提交。测试和文档必须与实现同批更新，运行产物不得提交。
+
+| 文件 | 作用与必要性 | 当前结论 |
+|---|---|---|
+| `.changes/a2ui-card-authoring.md` | 用户可见变更记录；命令面新增必须提供 | REQUIRED：明确 reference preview 证据边界和 profile-scoped delivery，不声称客户端像素或完整生产闭环 |
+| `docs/a2ui-agent-card-authoring-technical-design.md` | 设计、边界、实现追踪与验收唯一主文档 | REQUIRED；本轮同步实际状态，不能替代自动化收据 |
+| `go.mod`、`go.sum` | 引入 JSON Schema 校验依赖及其传递依赖 | REQUIRED_FIX：依赖本身有用途，但不能用删 pattern 代替等价语义校验；升级需复核许可证与供应链 |
+| `internal/app/root.go` | 将 `card` 纳入内建产品/命令组 | REQUIRED |
+| `internal/app/runner.go` | 将已解析 profile 的非敏感 `corpId/userId` 注入运行时身份上下文 | REQUIRED：card 写入台账不再依赖可复用别名 |
+| `internal/profilectx/profile.go`、`profile_test.go` | 在不让 helpers 反向依赖 auth 的前提下传递当前精确身份 | REQUIRED：只含非敏感身份，按单/多 profile 调用恢复 |
+| `internal/card/a2ui/authoring/authoring.go` | 组件语义、Block、Recipe、CompositionSpec 编译与 guide | REQUIRED；当前固定字段表达力为 PARTIAL |
+| `internal/card/a2ui/authoring/authoring_test.go` | 编译、Recipe、视觉默认值和确定性回归 | REQUIRED；后续补事实保真、Slot 和 Gallery 一致性门禁 |
+| `internal/card/a2ui/delivery/store.go`、`lock_process_*.go` | 本地 handle ledger、revision、flowStatus 持久化和崩溃可恢复锁 | REQUIRED：冻结 `corpId/userId`、环境摘要和目标，提供跨进程 handle 锁、死亡进程恢复与本地 revision CAS；服务端 CAS/回读不在该文件能力内 |
+| `internal/card/a2ui/delivery/store_test.go` | ledger 生命周期回归 | REQUIRED：覆盖精确 scope mismatch、旧 selector-only 台账拒绝、锁冲突、死亡进程锁恢复和 stale revision CAS |
+| `internal/card/a2ui/preview/preview.go` | 离线 reference renderer 与交互模拟 | REQUIRED；仅作结构快速反馈，不是客户端 Renderer |
+| `internal/card/a2ui/preview/preview_test.go` | DOM、样式、交互和公开字段投影回归 | REQUIRED；不得通过 Recipe ID 私有 CSS 造假 |
+| `internal/card/a2ui/protocol/assets/a2ui-catalog.json` | 组件协议权威输入 | REQUIRED_FIX：需公开来源、版本、许可证、digest 和升级流程 |
+| `internal/card/a2ui/protocol/assets/a2ui-common-types.json` | 公共类型协议权威输入 | REQUIRED_FIX：同上；不得保留无法公开解释的内部来源 |
+| `internal/card/a2ui/protocol/protocol.go` | Bundle 加载、结构/引用/组件/消息校验 | REQUIRED：已补被移除 pattern 的等价语义检查和 `updateComponents.components` 非空数组约束；协议资产来源/许可证仍是独立交付阻断项 |
+| `internal/card/a2ui/protocol/protocol_test.go` | 协议正负例与离线确定性测试 | REQUIRED：覆盖 HostResultPath、`dt_actionBindingsV1` 及缺失/null/对象/空数组 components 负例 |
+| `internal/card/a2ui/state/state.go` | Surface reducer、snapshot/delta 和状态归并 | REQUIRED：snapshot 严格解码、确定性叶级 diff；保护全部公开输入控件的 `value` binding；支持数组 JSON Pointer；缺失数据路径按合同保留，对协议无法表达的组件删除 fail closed |
+| `internal/card/a2ui/state/state_test.go` | reducer、revision、snapshot 差异测试 | REQUIRED：覆盖 snapshot 合法/非法结构、14 类输入值保持、叶级更新、数组路径、缺失数据保留和组件删除拒绝；远端乱序仍由后续集成层处理 |
+| `internal/cli/schema_parameter_mapping_completeness_test.go` | 为新增本地 `card` leaves 声明映射豁免/完整性 | REQUIRED；仍需 Safety truth 门禁覆盖写命令 |
+| `internal/helpers/card.go` | `dws card` Cobra 命令、参数、调用和输出 | REQUIRED：Safety、snapshot 独立解码、精确 user-query 合同、scope 校验及更新串行化已落地 |
+| `internal/helpers/card_test.go` | 命令面、dry-run、发送/更新和结构化失败测试 | REQUIRED：覆盖确认门禁、跨 profile 零远端调用、snapshot 输入保护、dry-run、ledger 生命周期和 user-query help 合同 |
+| `internal/helpers/chat.go` | 旧 A2UI 原子命令兼容边界 | REQUIRED：保留脚本兼容并 deprecated，引导 Agent 使用 `dws card send/update/finish` |
+| `internal/helpers/register_card.go` | 独立注册 card 产品与命令组 | REQUIRED；符合不手改生成注册表的仓库约束 |
+| `internal/helpers/testdata/a2ui-approval-spec.json` | 审批 Recipe 受评审 fixture | REQUIRED；由 focused tests、acceptance 和 Gallery 共同消费 |
+| `internal/helpers/testdata/a2ui-information-spec.json` | 信息/报告复杂组件覆盖 fixture | REQUIRED；由 focused tests、acceptance 和 Gallery 共同消费 |
+| `scripts/card/acceptance.sh` | source/preview 快速验收入口 | REQUIRED：断言当前透明 Panel 合同，并在 preview 层调用 Gallery 门禁、汇总 7/7 Recipe 与 14/14 组件收据 |
+| `scripts/card/preview-interaction-check.mjs` | 无远端副作用的输入/选择/按钮交互检查 | REQUIRED；执行环境缺 Node 时必须显式标记 unavailable，不能默认 PASS |
+| `internal/helpers/testdata/a2ui-notification-spec.json` | notification Recipe fixture | REQUIRED：已进入 Gallery + acceptance |
+| `internal/helpers/testdata/a2ui-task-spec.json` | task Recipe fixture | REQUIRED：已进入 Gallery + acceptance |
+| `internal/helpers/testdata/a2ui-schedule-spec.json` | schedule Recipe fixture | REQUIRED：已进入 Gallery + acceptance |
+| `internal/helpers/testdata/a2ui-report-spec.json` | report Recipe fixture | REQUIRED：已进入 Gallery + acceptance |
+| `internal/helpers/testdata/a2ui-form-spec.json` | form Recipe fixture，与 approval 的交互结构做差异化验收 | REQUIRED：已进入 Gallery + acceptance，并与 approval 保持内容收集/决策确认的结构差异 |
+| `scripts/card/recipe-gallery.html` | 7 Recipe reference preview 的仓库内索引壳 | REQUIRED：只引用生成目录内页面，不嵌入运行产物或外部私有基线 |
+| `scripts/card/render-recipe-gallery.sh` | 构建 7 Recipe、执行 lint/preview、检查 14 类组件并生成收据 | REQUIRED：由 `acceptance.sh --layer preview` 调用并输出机器可读状态 |
+
+### 28.1 Gallery 与 fixture 的正式合同
+
+1. `internal/helpers/testdata/a2ui-<recipe>-spec.json` 是受评审输入，不是生成结果；七个文件必须与 `dws card recipe list` 精确一一对应。
+2. `scripts/card/render-recipe-gallery.sh` 是唯一 Gallery 生成入口；必须接收 `--binary` 和 `--out`，输出 compose/lint/preview/manifest 收据，不调用远端。
+3. `scripts/card/recipe-gallery.html` 只提供稳定索引和说明，具体卡片由生成目录中的 reference preview 提供；不得复制协议、内嵌私有截图或写死机器路径。
+4. 生成目录属于测试 artifact，不提交 Git。Gallery PASS 只证明 7 Recipe 可编译、可 lint、可做本地结构预览以及目标组件覆盖，不证明卡片平台十套模板 1:1，也不证明真实钉钉端视觉/交互。
+5. Gallery 入口已接入 `scripts/card/acceptance.sh --layer preview`；收据记录二进制摘要、协议 Bundle、7/7 Recipe、14/14 组件及交互模拟是否实际执行。上述七个新增文件因此属于正式受评审输入，不再是孤立探索文件。
+
+## 29. Bugbot 缺陷与修复追踪矩阵
+
+以下问题均基于当前实现，不是未来优化建议。P1/P2 在修复并通过对应验收前阻断合并；状态不得仅因文档已登记而改成 PASS。
+
+| ID | 级别 | 问题与代码落点 | 规定修复 | 必须增加的验收 | 状态 |
+|---|---|---|---|---|---|
+| BB-01 | P1 | `delivery/store.go` 的 Record 不含 profile/组织/环境/目标 scope | 持久化不可变发送作用域；update/finish 对当前 profile 与台账 scope 做 fail-closed 核对 | `ProfileScope.Matches`、跨 profile helper 用例；scope mismatch 时远端调用数不变 | PASS |
+| BB-02 | P1 | `state/state.go` snapshot diff 可替换根 DataModel，ledger 又没有用户最新表单状态 | 声明 Agent 管理路径；只生成这些路径的 delta，用户/宿主路径默认保留 | state 单测与 helper snapshot 用例均只发送 `/content/status`，不生成 `/form` delta | PASS |
+| BB-03 | P1 | `card.go` 的 send/update/finish 为 `confirmation=not_required` | Contract/Safety 改为设计规定的 `user_required`，接入现有运行时确认门禁 | 无确认零远端调用、dry-run 可执行；Schema runtime-confirmation truth、Help 和 command surface 门禁通过 | PASS |
+| BB-04 | P1 | update 为无锁 load→remote→save，同 revision 可并发写 | handle 级串行化并在本地 save 使用 revision CAS；远端无 CAS 时如实标注保证边界 | 嵌套/跨进程同 handle 锁明确失败，stale revision CAS 失败；远端无 CAS 的边界保留在 §22 | PASS |
+| BB-05 | P2 | `--input-mode snapshot` 文档结构仍按 message batch 解码 | 按 `{version,surfaceId,components,dataModel}` 独立解码和完整校验，再生成 delta | `ParseSnapshot` 严格正负例、CLI fake-IM 与 `card show surface → snapshot dry-run` 直接 round-trip 通过；非法输入在远端前失败 | PASS |
+| BB-06 | P2 | `protocol.go` 删除不受 Go regexp 支持的 lookahead，但无等价检查 | 为 HostResultPath、dt_actionBindings 增加显式 Go 语义校验，不篡改协议意图 | 两类降级 pattern 的正负例与诊断码通过 | PASS |
+| BB-07 | P2 | `updateComponents` 缺失/错误 `components` 仍 lint 为 valid | 在 envelope/operation 层强制非空数组及完整组件对象 | 缺失、null、对象、空数组均返回对应诊断；真实 CLI lint 最小复现返回 failure | PASS |
+| BB-08 | P2 | `--user-query` 宣称支持姓名/线索，resolver 只接受 open ID/精确 userId | 收窄 Help/Schema 合同为精确 userId/openDingTalkId，不承诺姓名模糊搜索 | resolver dry-run 与 flag usage 自动化断言通过 | PASS |
+| BB-09 | P2 | `acceptance.sh` 断言过期 PanelContent padding | 断言协议/DOM 语义和当前稳定 token，避免绑定已删除的实现细节 | `acceptance.sh --layer all` 干净运行 PASS，并实际执行 interaction 与 Gallery | PASS |
+| BB-10 | P1 | 内置 `information` fixture 使用 data URI 占位图，本地 preview 可见但真实客户端显示“占位图生成失败” | 可发送 fixture 改为已验证 HTTP 200 的 HTTPS CDN；send/update/finish 在远端调用前拒绝 preview-only/不安全 Image URL | 协议正负例、helper 零远端调用、真实修正版 create + FINISH 回执通过；客户端最终取图仍由截图确认 | PARTIAL |
+| BB-11 | P1 | Snapshot 只保护 `TextField/ChoicePicker`，其它公开输入控件可能被 Agent 默认值覆盖 | 从公开输入组件清单统一提取 `value.path`，保留宿主持有输入 | 14 类输入组件逐表测试；正文仍可更新、绑定值保持 | PASS |
+| BB-12 | P1 | 台账 scope 只有 selector 字符串，别名重绑后可能跨账号更新 | runner 注入已解析非敏感身份；send 冻结 `corpId/userId/environment`；update 对旧 selector-only 台账 fail closed | 同身份通过、跨身份和旧台账拒绝、零远端调用 | PASS |
+| BB-13 | P1 | 进程崩溃遗留 `.lock` 会永久阻断 handle | 锁记录 PID/时间；Unix 校验进程存活，其它平台使用有界年龄；死亡 owner 安全回收 | live owner 拒绝、dead owner 回收、嵌套锁拒绝 | PASS |
+| BB-14 | P2 | Snapshot 删除组件时 Diff 静默忽略，实际卡片与期望快照分叉 | 协议未提供组件删除操作时 fail closed；数据对象缺失字段继续按既定合同解释为保留 | 组件删除返回显式错误；缺失数据键不产生更新 | PASS |
+| BB-15 | P1 | 单条 delta 可单独合法但合并后产生缺 child/环等非法完整 Surface | Reduce 后重建 create snapshot 并执行完整校验，再允许远端更新 | 缺失 child 的 merged Surface 在远端前失败 | PASS |
+| BB-16 | P2 | `setPointer` 只处理对象，合法数组路径更新失败 | 递归支持 object/array JSON Pointer，数组越界 fail closed | `/items/0/status` 成功、越界拒绝 | PASS |
+| BB-17 | P2 | `task/schedule` 的 Recipe 声明 `compact-notification-header`，编译器仍输出普通 Row header | 专用编译策略输出 `CardHeader(trailing=Tag)`、根 0 padding、正文 8np inset | 两个 Recipe 的消息 Schema、结构断言和 Gallery 目视抽查 | PASS（reference preview） |
+| BB-18 | P2 | compose 推断 Recipe 后仍在返回值中报告空 recipe；旧 chat 命令仍被 Agent 当作首选 | 统一 ResolveRecipe 回执；旧原子命令 deprecated 并在 selection 中路由到 `dws card` | compose 缺省回执和两个旧命令 deprecation 断言 | PASS |
+
+此外有两个开源交付阻断项：协议资产必须补齐公开来源、许可证和版本 manifest；卡片平台参考图必须先成为公开、可复现且可审计的来源包。两项均保持 BLOCKED，不能用内部地址、个人工作区或临时截图替代。
+
+## 30. 当前验收状态与合并退出条件
+
+本节是 §25 的实时摘要。执行环境、输入 commit、dirty diff、二进制摘要或协议资产变化后，旧证据失效。
+
+| 验收层 | 当前结果 | 已有证据 | 关闭条件 |
+|---|---|---|---|
+| Diff 基础卫生 | PASS | `git diff --check` 通过 | 最终 diff 再运行一次 |
+| 开源资产静态扫描 | PASS（能力有限） | `check-open-source-assets.sh` 通过 | 同时人工确认无内部 URL/本机路径，并补协议许可证 manifest |
+| Command surface | PASS | `check-command-surface.sh --strict` 在最终 Safety/参数 diff 上通过 | 命令面继续变化时重跑 |
+| A2UI package tests | PASS（源码层） | 2026-09-17 focused 与 package-wide `go test ./internal/card/a2ui/...` 通过，BB-01/02/04/05/06/07/11/13/14/16/17 新测试均在内 | 协议/状态/台账改变时重跑 |
+| Card focused helper tests | PASS（源码层） | 2026-09-17 `go test ./internal/helpers -run '^TestCrossPlatformCoverage(Card|LegacyA2UI)' -count=1` 通过，覆盖 BB-03/05/08/12/15/18 与 fake-IM 生命周期 | 命令参数或 Delivery 调用改变时重跑 |
+| Preview acceptance | PASS（reference preview） | 2026-09-17 `acceptance.sh --layer all` 生成 `source.json`、`preview-status.json`，interaction 实际执行且无远端副作用 | 不可提升为真实 Renderer PASS |
+| 7 Recipe Gallery | PASS（reference preview） | acceptance 内生成 `gallery-status.json`：7/7 Recipe、14/14 组件 | 新增 Recipe/组件时同步 fixture 与门禁 |
+| 完整 `go test ./...` | BLOCKED（仓库/环境范围） | `checkTypeV2` 编译失败已在 merge-base `8cacb019` 复现；当前全量还有 Keychain 超时、Go 1.27 错误文本断言、JSONML/minutes 旧用例和缺少 `gh` 等本批 diff 外失败，尚未逐项在 merge-base 复现；A2UI 相关包无新增失败 | 单独修复/复现这些仓库基线或环境问题后重跑全量；本批不越界修改无关模块 |
+| Schema/generated policy | PASS | `check-generated-drift.sh`、`check-schema-catalog.sh`、runtime confirmation truth 及 Schema assembly determinism 均通过 | Schema/Contract 变化时重跑 |
+| Snapshot/update 并发与输入保护 | PASS（源码层） | BB-01/02/04/05/11–16 的精确 scope、崩溃锁恢复、CAS、strict snapshot、14 类 protected path、数组 Pointer、组件删除拒绝、缺失数据保留与合并后 Surface 复验全部通过 | 真实端最新 DataModel/远端 CAS 仍归入下方集成项 |
+| 写操作确认合同 | PASS | Schema/Help/Runtime truth 与无确认零写入测试通过 | Safety 变化时重跑 |
+| 真实钉钉发送/更新 | PARTIAL | 2026-09-16 使用当前分支二进制和批准测试群完成内置 `information` Recipe 的 create、snapshot update、FINISH；修复 data URI 后又完成 HTTPS 图片修正版 create + FINISH，服务端回执复用各自 cardInstanceId，ledger scope/revision 一致；`verify` 仍明确 `deliveryVerified=false` | 用户确认修正版客户端图片；补服务端 readback、远端 CAS/乱序恢复及跨 scope 真实拒绝；不得用 MCP success 代替客户端渲染证据 |
+| 真实钉钉视觉与交互 | NOT_RUN | reference preview 不构成端侧证据 | PC/iOS/Android 同输入截图与按钮/输入/ChoicePicker/流式反馈事件回流 PASS |
+| 卡片平台十套模板 1:1 | BLOCKED | 无公共、可复现来源 manifest | 来源合法化、同 Renderer 合同或明确 NOT_COMPARABLE，逐区差异审阅完成 |
+
+当前 BB-01～BB-09、BB-11～BB-18 已关闭；BB-10 的源码、CLI fake-IM、HTTPS 可达性和受控真实发送证据已通过，等待用户确认修正版客户端图片后关闭。2026-09-17 的 Gallery 重新生成并目视抽查 `information/task/form`：七套均可见，task 的 CardHeader/inset、form 与 approval 的信息架构差异符合当前设计；该结果仍只属于 reference renderer。source/preview/Schema/generated/command surface 门禁须绑定最终提交 SHA 后再次运行。仍阻断“完整生产就绪”声明的项目是：协议来源/许可证 manifest、卡片平台十套来源合法化、服务端回读/远端 CAS，以及 PC/iOS/Android 真实视觉与 Action 回流。合并范围若只声明本地作者工具、协议校验、reference preview 与受保护增量更新，可进入评审；若声明完整可靠交互或像素一比一，则上述外部项必须先关闭。
