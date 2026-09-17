@@ -45,6 +45,7 @@ import (
 func init() {
 	runnerHandlePatAuthCheck = handlePatAuthCheck
 	runnerRetryWithPatAuthRetry = retryWithPatAuthRetry
+	profilectx.RegisterIdentityResolver(resolveRuntimeProfileIdentity)
 
 	configmeta.Register(configmeta.ConfigItem{
 		Name:        "DWS_RUNTIME_CONTENT_SCAN",
@@ -84,6 +85,17 @@ func init() {
 		Category:    configmeta.CategoryExternal,
 		Description: "MCP 请求 x-dingtalk-message-id 头",
 	})
+}
+
+func resolveRuntimeProfileIdentity(selector string) (profilectx.Identity, error) {
+	profile, err := authpkg.ResolveProfile(defaultConfigDir(), selector)
+	if err != nil {
+		return profilectx.Identity{}, err
+	}
+	if profile == nil {
+		return profilectx.Identity{}, nil
+	}
+	return profilectx.Identity{CorpID: profile.CorpID, UserID: profile.UserID}, nil
 }
 
 const (

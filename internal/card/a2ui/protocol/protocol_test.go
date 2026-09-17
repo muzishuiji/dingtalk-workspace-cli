@@ -32,6 +32,43 @@ func TestLoadAndValidateCreate(t *testing.T) {
 	}
 }
 
+func TestValidateGraphFollowsCardHeaderTrailingReference(t *testing.T) {
+	registry, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := registry.Validate([]map[string]any{{
+		"version": "v1.0",
+		"createSurface": map[string]any{
+			"surfaceId": "card",
+			"catalogId": registry.Catalog().CatalogID,
+			"components": []any{
+				map[string]any{"id": "root", "component": "Card", "child": "header"},
+				map[string]any{"id": "header", "component": "CardHeader", "title": "日程提醒", "trailing": "status"},
+				map[string]any{"id": "status", "component": "Tag", "text": "需处理"},
+			},
+		},
+	}}, "create")
+	if !result.Valid || hasDiagnostic(result.Diagnostics, "A2UI_COMPONENT_UNREACHABLE") {
+		t.Fatalf("expected trailing component to be reachable: %+v", result.Diagnostics)
+	}
+
+	missing := registry.Validate([]map[string]any{{
+		"version": "v1.0",
+		"createSurface": map[string]any{
+			"surfaceId": "card",
+			"catalogId": registry.Catalog().CatalogID,
+			"components": []any{
+				map[string]any{"id": "root", "component": "Card", "child": "header"},
+				map[string]any{"id": "header", "component": "CardHeader", "title": "日程提醒", "trailing": "missing"},
+			},
+		},
+	}}, "create")
+	if missing.Valid || !hasDiagnostic(missing.Diagnostics, "A2UI_COMPONENT_REF_MISSING") {
+		t.Fatalf("expected missing trailing reference failure: %+v", missing.Diagnostics)
+	}
+}
+
 func TestValidateRejectsRadioButtonAndMissingCatalog(t *testing.T) {
 	registry, err := Load()
 	if err != nil {

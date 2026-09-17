@@ -320,6 +320,28 @@ func TestCrossPlatformCoverageCardSendRequiresResolvedExactIdentity(t *testing.T
 	}
 }
 
+func TestCrossPlatformCoverageCardSendResolvesIdentityBeforeRunner(t *testing.T) {
+	t.Setenv("DWS_CARD_STATE_DIR", t.TempDir())
+	testseam.Swap(t, &cardCurrentProfileIdentity, func() profilectx.Identity { return profilectx.Identity{} })
+	testseam.Swap(t, &cardResolveProfileIdentity, func(selector string) (profilectx.Identity, error) {
+		if selector != "corp-a:user-a" {
+			t.Fatalf("selector = %q, want corp-a:user-a", selector)
+		}
+		return profilectx.Identity{CorpID: "corp-a", UserID: "user-a"}, nil
+	})
+	caller := &cardTestCaller{dryRun: true}
+	stdout, err := runCardCommandWithoutProfileSeam(t, caller, "send", "--profile", "corp-a:user-a", "--conversation-id", "cid-test", "--file", writeCardMessages(t), "--dry-run")
+	if err != nil {
+		t.Fatalf("send dry-run error = %v", err)
+	}
+	if !strings.Contains(stdout, `"dryRun": true`) {
+		t.Fatalf("stdout = %s, want dry-run receipt", stdout)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("dry-run reached remote: %+v", caller.calls)
+	}
+}
+
 func TestCrossPlatformCoverageCardUpdateRejectsInvalidFinalSurface(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("DWS_CARD_STATE_DIR", stateDir)

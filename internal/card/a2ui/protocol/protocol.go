@@ -568,6 +568,9 @@ func componentRefs(component map[string]any) []string {
 	if child, ok := component["child"].(string); ok && child != "" {
 		refs = append(refs, child)
 	}
+	if trailing, ok := component["trailing"].(string); ok && trailing != "" {
+		refs = append(refs, trailing)
+	}
 	switch children := component["children"].(type) {
 	case []any:
 		for _, child := range children {

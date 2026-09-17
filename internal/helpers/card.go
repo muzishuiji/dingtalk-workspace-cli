@@ -32,7 +32,10 @@ var cardResultSpec = &contract.ResultSpec{
 	DataSchema: json.RawMessage(`{"type":"object","description":"A2UI card command result","additionalProperties":true}`),
 }
 
-var cardCurrentProfileIdentity = profilectx.GetIdentity
+var (
+	cardCurrentProfileIdentity = profilectx.GetIdentity
+	cardResolveProfileIdentity = profilectx.ResolveIdentity
+)
 
 func newCardCommand() *cobra.Command {
 	root := newGroupCommand(&cobra.Command{Use: "card", Short: "构建、校验、预览、发送和更新 A2UI 卡片"})
@@ -369,6 +372,13 @@ func resolveCardProfileScope(cmd *cobra.Command) (delivery.ProfileScope, error) 
 		selector = runtimeSelector
 	}
 	identity := cardCurrentProfileIdentity()
+	if strings.TrimSpace(identity.CorpID) == "" || strings.TrimSpace(identity.UserID) == "" {
+		resolved, err := cardResolveProfileIdentity(selector)
+		if err != nil {
+			return delivery.ProfileScope{}, fmt.Errorf("resolve card profile identity: %w", err)
+		}
+		identity = resolved
+	}
 	if strings.TrimSpace(identity.CorpID) == "" || strings.TrimSpace(identity.UserID) == "" {
 		return delivery.ProfileScope{}, fmt.Errorf("card command requires --profile to resolve to one exact corpId:userId identity")
 	}
