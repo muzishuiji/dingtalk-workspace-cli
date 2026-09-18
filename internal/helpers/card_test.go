@@ -116,6 +116,9 @@ func TestCrossPlatformCoverageCardOfflineComposeLintPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(stdout, `"previewKind": "reference_preview"`) || !strings.Contains(stdout, previewPath) {
+		t.Fatalf("preview output=%s", stdout)
+	}
 	raw, err := os.ReadFile(previewPath)
 	if err != nil {
 		t.Fatal(err)
