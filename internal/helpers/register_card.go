@@ -21,5 +21,5 @@ func init() {
 			}},
 		},
 	})
-	RegisterPublic(func() Handler { return wukongHandler{name: "card", buildFn: newCardCommand} })
+	RegisterPublicNamed("card", func() Handler { return wukongHandler{name: "card", buildFn: newCardCommand} })
 }
