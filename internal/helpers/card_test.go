@@ -6,9 +6,12 @@ package helpers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,7 +37,7 @@ func (c *cardTestCaller) CallTool(_ context.Context, product, tool string, args 
 	c.calls = append(c.calls, cardTestCall{product: product, tool: tool, args: args})
 	response := `{"success":true}`
 	if tool == "create_and_send_a2ui_card" {
-		response = `{"result":{"bizId":"biz-test-42"}}`
+		response = `{"result":{"bizId":"biz-test-42","cardInstanceId":12345}}`
 	}
 	return &edition.ToolResult{Content: []edition.ContentBlock{{Type: "text", Text: response}}}, nil
 }
@@ -86,7 +89,7 @@ func runCardCommandWithoutProfileSeam(t *testing.T, caller *cardTestCaller, args
 
 func writeCardMessages(t *testing.T) string {
 	t.Helper()
-	messages, err := authoring.Compile(authoring.Spec{Recipe: "approval", SurfaceID: "test-surface", Title: "发布审批", Status: "待确认", Body: "请检查本次变更。", PrimaryCTA: "批准", Secondary: "退回"})
+	messages, err := authoring.Compile(authoring.Spec{Recipe: "form", SurfaceID: "test-surface", Title: "发布信息", Status: "待填写", Body: "请补充本次发布信息。", PrimaryCTA: "提交", Secondary: "取消"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +126,7 @@ func TestCrossPlatformCoverageCardOfflineComposeLintPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte("reference_preview")) || !bytes.Contains(raw, []byte("发布审批")) {
+	if !bytes.Contains(raw, []byte("reference_preview")) || !bytes.Contains(raw, []byte("发布信息")) {
 		t.Fatalf("preview=%s", raw)
 	}
 	if len(caller.calls) != 0 {
@@ -142,6 +145,86 @@ func TestCrossPlatformCoverageCardComposeReportsInferredRecipe(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"recipe": "notification"`) {
 		t.Fatalf("compose output=%s", stdout)
+	}
+}
+
+func TestCrossPlatformCoverageCardDoctorReportsInvokedBinaryCapabilities(t *testing.T) {
+	stdout, err := runCardCommand(t, &cardTestCaller{}, "doctor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Data struct {
+			Binary       map[string]any `json:"binary"`
+			Capabilities map[string]any `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.Binary["pathAvailable"] != true || response.Data.Binary["path"] == "" {
+		t.Fatalf("doctor binary identity is missing: %s", stdout)
+	}
+	if response.Data.Binary["cliVersion"] == "" {
+		t.Fatalf("doctor CLI version is missing: %s", stdout)
+	}
+	for _, capability := range []string{"a2uiSend", "a2uiUpdate", "a2uiFinish", "a2uiSnapshot", "visualLint", "semanticBlocks"} {
+		if response.Data.Capabilities[capability] != true {
+			t.Errorf("doctor lacks %s capability: %s", capability, stdout)
+		}
+	}
+}
+
+func TestCrossPlatformCoverageCardGuideExposesInformationPlan(t *testing.T) {
+	caller := &cardTestCaller{}
+	for _, args := range [][]string{
+		{"guide", "recommend", "--intent", "GitHub issue #1438 CLI timestamp mismatch"},
+		{"guide", "rules"},
+	} {
+		stdout, err := runCardCommand(t, caller, args...)
+		if err != nil {
+			t.Fatalf("card %v: %v", args, err)
+		}
+		var response struct {
+			Data struct {
+				InformationPlan  authoring.InformationPlanGuidance `json:"informationPlan"`
+				RecipeIsOptional bool                              `json:"recipeIsOptional"`
+				RecipeMatch      bool                              `json:"recipeMatch"`
+				SuggestedPath    string                            `json:"suggestedPath"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+			t.Fatalf("card %v: %v\n%s", args, err, stdout)
+		}
+		plan := response.Data.InformationPlan
+		if len(plan.Roles) < 5 || len(plan.GroupingRules) == 0 || len(plan.VisualRules) == 0 || len(plan.Review) == 0 {
+			t.Fatalf("card %v returned incomplete information plan: %+v", args, plan)
+		}
+		if args[1] == "recommend" && !response.Data.RecipeIsOptional {
+			t.Fatalf("card %v made the Recipe mandatory", args)
+		}
+		if args[1] == "recommend" && response.Data.RecipeMatch {
+			t.Fatalf("card %v treated an unknown intent as a Recipe match", args)
+		}
+		if args[1] == "recommend" && response.Data.SuggestedPath != "custom" {
+			t.Fatalf("card %v suggested path=%q, want custom", args, response.Data.SuggestedPath)
+		}
+		if len(plan.Artifact.RequiredFields) != 7 || !slices.Contains(plan.Artifact.RequiredDecisions, "messageArchetype") || !slices.Contains(plan.Artifact.RequiredDecisions, "headerDecision") || len(plan.Artifact.PriorityValues) != 3 {
+			t.Fatalf("card %v returned incomplete plan artifact: %+v", args, plan.Artifact)
+		}
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("guide commands made remote calls: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardGuideRecognizesNotification(t *testing.T) {
+	stdout, err := runCardCommand(t, &cardTestCaller{}, "guide", "recommend", "--intent", "风险通知")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `"recipeMatch": true`) || !strings.Contains(stdout, `"name": "notification"`) || !strings.Contains(stdout, `"suggestedPath": "review_recipe"`) {
+		t.Fatalf("matched notification guidance=%s", stdout)
 	}
 }
 
@@ -181,6 +264,20 @@ func TestCrossPlatformCoverageCardLintFailureIsStructuredAndOffline(t *testing.T
 	}
 	if len(caller.calls) != 0 {
 		t.Fatalf("invalid lint made calls: %+v", caller.calls)
+	}
+}
+
+func TestCrossPlatformCoverageCardLintEnforcesAcceptanceWidth(t *testing.T) {
+	caller := &cardTestCaller{}
+	stdout, err := runCardCommand(t, caller, "lint", "--file", writeCardMessages(t), "--design-archetype", "approval", "--minimum-validation-width", "240")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `"outcome": "failure"`) || !strings.Contains(stdout, `"NOTIFICATION_WIDTH_TOO_NARROW"`) {
+		t.Fatalf("lint did not reject the unsupported approval width: %s", stdout)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("visual lint made remote calls: %+v", caller.calls)
 	}
 }
 
@@ -231,6 +328,10 @@ func TestCrossPlatformCoverageCardSendUpdateUsesFakeIMAndLedger(t *testing.T) {
 	}
 	if record.Revision != 2 || record.FlowStatus != "FINISH" || record.Profile.Selector != "corp-a:user-a" || record.Profile.CorpID != "corp-a" || record.Profile.UserID != "user-a" || record.Profile.Environment == "" {
 		t.Fatalf("record=%+v", record)
+	}
+	keyHash := sha256.Sum256([]byte(caller.calls[0].args["bizCardId"].(string)))
+	if record.CardInstanceID != "12345" || record.CreateRequestID != caller.calls[0].args["requestId"] || record.IdempotencyKeySHA256 != fmt.Sprintf("%x", keyHash) {
+		t.Fatalf("create identity not retained in ledger: %+v", record)
 	}
 	stdout, err = runCardCommand(t, caller, "finish", "--profile", "test", "--handle", envelope.Data.Handle, "--flow-status", "ABORTED", "--yes")
 	if err != nil {

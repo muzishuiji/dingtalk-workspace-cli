@@ -46,19 +46,17 @@
 <body>
   <header>
     <h1>A2UI 内置模板画廊</h1>
-    <p class="intro">一次查看全部 7 个语义化 Recipe。每张卡片均由对应 CompositionSpec 通过 <code>dws card compose</code> 编译，再由本地 reference renderer 渲染；表单、选择器、按钮、附件预览和折叠面板可直接操作。</p>
+    <p class="intro">Preview all 5 built-in A2UI recipes. Each card is compiled from its CompositionSpec and rendered locally for structural review.</p>
     <div class="legend" aria-label="画廊说明">
-      <span>7 个内置 Recipe</span>
-      <span>14 类一期组件覆盖</span>
+      <span>5 built-in recipes</span>
+      <span>12 component types covered</span>
       <span>本地无远端副作用</span>
     </div>
     <nav aria-label="跳转到模板">
       <a href="#notification">通知</a>
       <a href="#information">信息</a>
-      <a href="#approval">审批</a>
       <a href="#task">任务</a>
       <a href="#schedule">日程</a>
-      <a href="#report">报告</a>
       <a href="#form">表单</a>
     </nav>
   </header>
@@ -71,21 +69,13 @@
       <div class="template-head"><h2>丰富信息摘要</h2><span class="recipe-id">information</span><p class="template-copy">封面、指标、进展、附件、详情和主要动作的完整信息层次。</p></div>
       <iframe title="information 模板预览" src="information-preview.html?embed=1"></iframe>
     </article>
-    <article id="approval">
-      <div class="template-head"><h2>审批确认</h2><span class="recipe-id">approval</span><p class="template-copy">先给出审批结论，再补充判断依据；保留明确的批准与退回决策。</p></div>
-      <iframe title="approval 模板预览" src="approval-preview.html?embed=1"></iframe>
-    </article>
     <article id="task">
       <div class="template-head"><h2>任务处理</h2><span class="recipe-id">task</span><p class="template-copy">责任信息、当前进展、完成标准和处理动作。</p></div>
       <iframe title="task 模板预览" src="task-preview.html?embed=1"></iframe>
     </article>
     <article id="schedule">
-      <div class="template-head"><h2>日程冲突</h2><span class="recipe-id">schedule</span><p class="template-copy">时间冲突、建议说明和快速调整入口。</p></div>
+      <div class="template-head"><h2>Meeting schedule</h2><span class="recipe-id">schedule</span><p class="template-copy">Meeting title, time, joining details, and response status.</p></div>
       <iframe title="schedule 模板预览" src="schedule-preview.html?embed=1"></iframe>
-    </article>
-    <article id="report">
-      <div class="template-head"><h2>层次化报告</h2><span class="recipe-id">report</span><p class="template-copy">结论优先，辅以关键指标、重点进展、附件和数据口径。</p></div>
-      <iframe title="report 模板预览" src="report-preview.html?embed=1"></iframe>
     </article>
     <article id="form">
       <div class="template-head"><h2>结构化信息收集</h2><span class="recipe-id">form</span><p class="template-copy">字段集中成独立填写区，完成信息后统一提交；取消操作保持低强调。</p></div>

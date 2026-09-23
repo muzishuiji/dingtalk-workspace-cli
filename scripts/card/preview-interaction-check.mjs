@@ -12,58 +12,18 @@ const html = readFileSync(previewPath, "utf8");
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 assert.ok(scripts.length > 0, "preview must contain an interaction script");
 
-const textField = {
-  type: "textarea",
-  value: "本地交互验收通过",
-  dataset: { bindingPath: "/form/comment" },
-};
-const firstChoice = {
-  type: "radio",
-  checked: false,
-  value: "option_1",
-  dataset: { bindingPath: "/form/choice" },
-};
-const secondChoice = {
-  type: "radio",
-  checked: true,
-  value: "option_2",
-  dataset: { bindingPath: "/form/choice" },
-};
-const primaryButton = {
-  dataset: { eventName: "primary", surfaceId: "dws-local-approval" },
-  addEventListener(type, listener) {
-    assert.equal(type, "click");
-    this.click = listener;
-  },
-};
 const result = { hidden: true };
 const output = { textContent: "" };
 let dispatched;
 
 global.document = {
-  querySelectorAll(selector) {
-    if (selector === ".Image") {
-      return [];
-    }
-    if (selector === "[data-preview-event]") {
-      return [];
-    }
-    if (selector === "[data-binding-path]") {
-      return [textField, firstChoice, secondChoice];
-    }
-    if (selector === "button[data-event-name]") {
-      return [primaryButton];
-    }
-    throw new Error(`unexpected selector: ${selector}`);
-  },
+  querySelectorAll() { return []; },
   getElementById(id) {
     if (id === "interaction-json") return output;
     if (id === "interaction-result") return result;
     throw new Error(`unexpected element id: ${id}`);
   },
-  dispatchEvent(event) {
-    dispatched = event;
-  },
+  dispatchEvent(event) { dispatched = event; },
 };
 global.CustomEvent = class CustomEvent {
   constructor(type, init) {
@@ -72,26 +32,42 @@ global.CustomEvent = class CustomEvent {
   }
 };
 
+const releaseControls = [
+  { type: "text", value: "1.0.0", dataset: { bindingPath: "/form/version" } },
+  { type: "textarea", value: "Release notes", dataset: { bindingPath: "/form/notes" } },
+  { type: "checkbox", checked: true, value: "web", dataset: { bindingPath: "/form/platforms" } },
+  { type: "checkbox", checked: true, value: "ios", dataset: { bindingPath: "/form/platforms" } },
+  { tagName: "SELECT", value: "staging", dataset: { bindingPath: "/form/environment" } },
+  { type: "radio", checked: false, value: "standard", dataset: { bindingPath: "/form/strategy" } },
+  { type: "radio", checked: true, value: "gradual", dataset: { bindingPath: "/form/strategy" } },
+];
+const releaseButton = {
+  dataset: { eventName: "form_submit", surfaceId: "dws-local-form" },
+  addEventListener(type, listener) {
+    assert.equal(type, "click");
+    this.click = listener;
+  },
+};
+global.document.querySelectorAll = (selector) => {
+  if (selector === ".Image" || selector === "[data-preview-event]") return [];
+  if (selector === "[data-binding-path]") return releaseControls;
+  if (selector === "button[data-event-name]") return [releaseButton];
+  throw new Error(`unexpected selector: ${selector}`);
+};
 new Function(scripts.at(-1)[1])();
-assert.equal(typeof primaryButton.click, "function", "button click listener must be registered");
-primaryButton.click();
+releaseButton.click();
+assert.deepEqual(JSON.parse(output.textContent).event.context.form, {
+  version: "1.0.0",
+  notes: "Release notes",
+  platforms: ["web", "ios"],
+  environment: ["staging"],
+  strategy: ["gradual"],
+});
 
 const payload = JSON.parse(output.textContent);
-assert.deepEqual(payload, {
-  event: {
-    name: "primary",
-    context: {
-      surfaceId: "dws-local-approval",
-      form: {
-        comment: "本地交互验收通过",
-        choice: "option_2",
-      },
-    },
-  },
-  localPreview: true,
-});
-assert.equal(result.hidden, false, "interaction result must become visible");
+assert.equal(payload.event.name, "form_submit");
+assert.equal(payload.event.context.surfaceId, "dws-local-form");
+assert.equal(result.hidden, false);
 assert.equal(dispatched.type, "dws-a2ui-preview-action");
 assert.deepEqual(dispatched.detail, payload);
-
 process.stdout.write(`${JSON.stringify({ status: "PASS", payload })}\n`);

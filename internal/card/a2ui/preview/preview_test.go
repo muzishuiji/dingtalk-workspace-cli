@@ -12,7 +12,7 @@ import (
 )
 
 func TestRenderReferencePreview(t *testing.T) {
-	messages, err := authoring.Compile(authoring.Spec{Recipe: "approval", SurfaceID: "preview", Title: "方案审批", Status: "待确认", Body: "请检查发布范围。", PrimaryCTA: "同意", Secondary: "拒绝"})
+	messages, err := authoring.Compile(authoring.Spec{Recipe: "form", SurfaceID: "preview", Title: "信息收集", Status: "待填写", Body: "请补充发布信息。", PrimaryCTA: "提交", Secondary: "取消"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestRenderReferencePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(html)
-	for _, want := range []string{"reference_preview", "方案审批", "请检查发布范围", `data-component="Button"`, `type="radio"`, `class="FieldLabel">审批意见（选填）`, `placeholder="补充判断依据或修改建议"`, `class="FieldLabel">处理结果`} {
+	for _, want := range []string{"reference_preview", "信息收集", "请补充发布信息", `data-component="Button"`, `type="radio"`, `class="FieldLabel">补充信息`, `placeholder="请输入 Agent 继续处理所需的信息"`, `class="FieldLabel">执行方式`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("preview missing %q", want)
 		}
@@ -34,12 +34,12 @@ func TestRenderReferencePreview(t *testing.T) {
 
 func TestReferencePreviewInteractionContract(t *testing.T) {
 	messages, err := authoring.Compile(authoring.Spec{
-		Recipe:     "approval",
+		Recipe:     "form",
 		SurfaceID:  "interactive-preview",
 		Title:      "交互验收",
-		Body:       "填写意见并选择结果。",
-		PrimaryCTA: "批准",
-		Secondary:  "退回",
+		Body:       "填写信息并选择处理方式。",
+		PrimaryCTA: "提交",
+		Secondary:  "取消",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +54,10 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 	}
 	rendered := string(html)
 	for _, want := range []string{
-		`<textarea class="TextFieldControl" placeholder="补充判断依据或修改建议" data-binding-path="/form/comment">`,
+		`<textarea class="TextFieldControl" placeholder="请输入 Agent 继续处理所需的信息" data-binding-path="/form/comment">`,
 		`type="radio" name="choice" value="option_1" data-binding-path="/form/choice"`,
-		`<button type="button" class="ButtonControl default" data-event-name="approval_return" data-surface-id="interactive-preview">`,
-		`<button type="button" class="ButtonControl primary" data-event-name="approval_submit" data-surface-id="interactive-preview">`,
+		`<button type="button" class="ButtonControl borderless" data-event-name="form_cancel" data-surface-id="interactive-preview">`,
+		`<button type="button" class="ButtonControl primary" data-event-name="form_submit" data-surface-id="interactive-preview">`,
 		`id="interaction-result"`,
 		`new CustomEvent("dws-a2ui-preview-action"`,
 		`form:model.form??{}`,
@@ -66,7 +66,7 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 		`.embed .notice{display:none}`,
 		`result.setAttribute("role","status")`,
 		`document.querySelectorAll('[data-component="ChoicePicker"]')`,
-		`group.setAttribute("role","radiogroup")`,
+		`group.classList.contains("multipleSelection")?"group":"radiogroup"`,
 		`class="ChoicePickerControl"`,
 	} {
 		if !strings.Contains(rendered, want) {
@@ -83,6 +83,41 @@ func TestReferencePreviewInteractionContract(t *testing.T) {
 	}
 	if strings.Contains(rendered, `<div class="ChoicePicker">`) {
 		t.Fatal("ChoicePicker component wrapper and internal control must not duplicate layout classes")
+	}
+}
+
+func TestRenderReleaseFormChoiceStyles(t *testing.T) {
+	messages, err := authoring.Compile(authoring.Spec{
+		Recipe: "form", SurfaceID: "release-preview", Title: "Release details", Body: "Complete the release details.",
+		FormFields: []authoring.FormField{
+			{ID: "version", Label: "Version", Kind: "text"},
+			{ID: "platforms", Label: "Platforms", Kind: "checkbox", Options: []authoring.FormOption{{Label: "Web", Value: "web"}, {Label: "iOS", Value: "ios"}}},
+			{ID: "environment", Label: "Environment", Kind: "dropdown", Options: []authoring.FormOption{{Label: "Staging", Value: "staging"}}},
+			{ID: "strategy", Label: "Strategy", Kind: "radio", Options: []authoring.FormOption{{Label: "Gradual", Value: "gradual"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := state.Reduce(state.Surface{}, messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`data-binding-path="/form/version"`,
+		`type="checkbox" name="field_platforms"`,
+		`<select data-binding-path="/form/environment">`,
+		`<option value="staging">Staging</option>`,
+		`type="radio" name="field_strategy"`,
+		`selected.get(path).push(control.value)`,
+	} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("release form preview missing %q", want)
+		}
 	}
 }
 
@@ -120,43 +155,31 @@ func TestRenderRichInformationComponents(t *testing.T) {
 	}
 	rendered := string(html)
 	for _, want := range []string{
+		`data-component="CardHeader"`, `.CardHeader{display:flex;min-height:48px;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-3);background:#e8f3ff`,
 		`data-component="Image"`, `class="ImagePreview"`, `aria-label="预览：季度报告"`, `alt="季度报告"`, `data-component="File"`, "report.pdf",
 		`class="FileMain" href="https://example.com/report/preview"`, `data-preview-event="file_preview"`,
-		`class="FileAction" href="https://example.com/report.pdf"`, "正式版 · 2.4 MB · application/pdf", `class="FileIcon">PDF`,
-		`data-component-id="metrics"`, "关键指标", "96%", `data-component-id="highlights"`, "核心交付", "已完成验收",
-		`data-max-line="2"`, `data-component="CollapsiblePanel"`, "<details>", "<summary>数据口径与补充说明</summary>",
-		`class="PanelContent" data-max-height="240"`, "<h3>数据口径</h3>",
-		`data-component="Link"`, `href="https://example.com/details"`, `data-component="Button"`, "<h2>核心结论</h2>",
+		`class="FileAction" href="https://example.com/report.pdf"`, `class="FileMeta">正式版`, `class="FileIcon"><img src="https://g.alicdn.com/dingding/card_a2ui/0.1.0/img/ding-file-icons/pdf_light.Dsh5wUh.png"`, `aria-label="打开 report.pdf"`,
+		`.FileControl{height:64px;min-height:64px;gap:0;padding:12px;border:.5px solid rgba(24,28,31,.2);border-radius:12px`,
+		`.FileIcon{width:40px;height:40px`, `.FileMain{gap:12px;padding:0}`, `.FileName{font-size:14px;line-height:20px`, `.FileMeta{margin-top:2px;color:rgba(20,20,20,.35);font-size:12px;line-height:16px`,
+		`.FileAction{width:16px;min-width:16px;height:16px;min-height:16px;margin-left:12px;padding:0`,
+		`data-component-id="metric_panel_1"`, `data-component-id="metric_panel_2"`, `data-component-id="metrics"`, "关键指标", "96%", `data-component-id="highlight_panel_1"`, `data-component-id="highlights"`, "核心交付", "已完成验收",
+		`data-max-line="2"`, "<blockquote>", "<strong>数据口径与补充说明</strong>", "<h3>数据口径</h3>",
+		`data-component="Button"`, "<h2>核心结论</h2>",
 		"图片暂不可用", `image.naturalWidth<=1`,
 		`--space-2:8px`, `--space-3:12px`, `.Card>.Column{gap:var(--space-2)}`,
 		`[data-padding="12"]{padding:var(--space-3)}`,
-		`.CollapsiblePanel details{padding:0 var(--space-3)}`,
-		`.CollapsiblePanel summary::-webkit-details-marker{display:none}`,
-		`.CollapsiblePanel summary::before{width:8px;height:8px;flex:none;border-right:2px solid currentColor;border-bottom:2px solid currentColor;content:"";transform:rotate(-45deg);transform-origin:center}`,
-		`.CollapsiblePanel details[open]>summary::before{transform:rotate(45deg)}`,
-		`.PanelContent{position:relative;margin:0;padding:0;overflow:auto}`,
+		`border-width:0.5px`,
 		`data-component-id="details_content"`, `data-padding="12"`,
-		`.CollapsiblePanel.indented .PanelContent{padding-left:calc(var(--space-2) + 1px)}`,
-		`.CollapsiblePanel.indented .PanelContent::before{position:absolute;top:var(--space-3);bottom:var(--space-3);left:0;width:1px;border-radius:1px;background:#d9dde3;content:""}`,
-		`.CollapsiblePanel.reasoning{background:transparent}`,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rich preview missing %q", want)
 		}
 	}
-	if strings.Contains(rendered, "<details open>") {
-		t.Fatal("CollapsiblePanel must honor the protocol default and start collapsed")
+	if strings.Contains(rendered, `data-component="CollapsiblePanel"`) {
+		t.Fatal("information details must remain visible as a quote")
 	}
-	for _, forbidden := range []string{
-		`.CollapsiblePanel details[open]>summary{border-bottom:`,
-		`.CollapsiblePanel.indented .PanelContent{padding-left:var(--space-2);border-left:`,
-	} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("rendered preview contains obsolete broken-border styling %q", forbidden)
-		}
-	}
-	if strings.Contains(rendered, "list-style-position:outside") {
-		t.Fatal("native outside disclosure marker can escape the panel inset")
+	if strings.Contains(rendered, `data-component-id="detail_link"`) || strings.Contains(rendered, "打开完整详情") {
+		t.Fatal("information preview must not duplicate the primary report action")
 	}
 }
 
@@ -187,6 +210,36 @@ func TestRenderMarkdownStructureAndEscaping(t *testing.T) {
 	for _, unsafe := range []string{"<script>alert('xss')</script>", `href="javascript:`} {
 		if strings.Contains(rendered, unsafe) {
 			t.Fatalf("rendered Markdown contains unsafe output %q: %s", unsafe, rendered)
+		}
+	}
+}
+
+func TestRenderMarkdownTableStructureAndResponsiveStyle(t *testing.T) {
+	messages, err := authoring.Compile(authoring.Spec{
+		Recipe:    "notification",
+		SurfaceID: "markdown-table-preview",
+		Title:     "运行周报",
+		Body:      "| 可用性 | P95 | P1 事件 |\n| :--- | :--- | :--- |\n| **99.96%** | **418ms** | **3** |",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := state.Reduce(state.Surface{}, messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := Render(surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(html)
+	for _, want := range []string{
+		"<table>", "<thead>", "<tbody>", "<th", ">可用性</th>", "<strong>99.96%</strong>",
+		`.Markdown table{width:100%;border-collapse:collapse;table-layout:fixed`,
+		`.Markdown th,.Markdown td{padding:8px;border:1px solid #e3e7ec`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered Markdown table missing %q", want)
 		}
 	}
 }
@@ -266,6 +319,7 @@ func TestRenderProjectsPublicBoxModelAndImageVariants(t *testing.T) {
 		`style="padding:12px;gap:16px;border-radius:8px;border-width:1px;background-color:#E8F3FFFF;border-color:#B7D8FFFF;border-style:solid"`,
 		`.ImageFrame.avatar{width:40px;height:40px;border-radius:50%}`,
 		`.ImageFrame.header{width:100%;height:200px}`,
+		`.ImageFrame.header.contain{background:#fff}`,
 		`.ImageFrame>.Image{display:block;width:100%;height:100%;object-fit:cover}`,
 		`.Row>.Image{flex:none}`,
 		`.Row>.Image.smallFeature{width:96px}`,

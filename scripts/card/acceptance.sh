@@ -54,7 +54,7 @@ run_dws() {
 
 run_preview() {
   ensure_binary
-  local spec="$repo_root/internal/helpers/testdata/a2ui-approval-spec.json"
+  local spec="$repo_root/internal/helpers/testdata/a2ui-form-spec.json"
   local rich_spec="$repo_root/internal/helpers/testdata/a2ui-information-spec.json"
   run_dws card compose --file "$spec" --output "$out/messages.json" --format json > "$out/compose.json"
   run_dws card lint --file "$out/messages.json" --mode create --format json > "$out/lint.json"
@@ -63,14 +63,10 @@ run_preview() {
   run_dws card lint --file "$out/information-messages.json" --mode create --format json > "$out/information-lint.json"
   run_dws card preview --file "$out/information-messages.json" --output "$out/information-preview.html" --format json > "$out/information-preview.json"
 
-  require_text "$out/preview.html" '<h3>变更摘要</h3>'
-  require_text "$out/preview.html" '<li>新增语义化 Recipe</li>'
-  require_text "$out/preview.html" 'class="FieldLabel">审批意见（选填）'
-  require_text "$out/preview.html" 'class="TextFieldControl" placeholder="补充判断依据或修改建议"'
-  require_text "$out/preview.html" 'data-binding-path="/form/comment"'
-  require_text "$out/preview.html" 'data-binding-path="/form/choice"'
-  require_text "$out/preview.html" '<button type="button" class="ButtonControl default" data-event-name="approval_return"'
-  require_text "$out/preview.html" '<button type="button" class="ButtonControl primary" data-event-name="approval_submit"'
+  require_text "$out/preview.html" 'data-binding-path="/form/version"'
+  require_text "$out/preview.html" 'data-binding-path="/form/platforms"'
+  require_text "$out/preview.html" 'data-binding-path="/form/environment"'
+  require_text "$out/preview.html" '<button type="button" class="ButtonControl primary" data-event-name="form_submit"'
   require_text "$out/preview.html" 'new CustomEvent("dws-a2ui-preview-action"'
   require_text "$out/preview.html" 'id="interaction-result"'
   reject_text "$out/preview.html" ' disabled'
@@ -86,8 +82,7 @@ run_preview() {
   fi
   require_text "$out/information-preview.html" 'data-component="Image"'
   require_text "$out/information-preview.html" 'data-component="File"'
-  require_text "$out/information-preview.html" 'data-component="CollapsiblePanel"'
-  require_text "$out/information-preview.html" 'data-component="Link"'
+  require_text "$out/information-preview.html" '<blockquote>'
   require_text "$out/information-preview.html" '<h2>核心结论</h2>'
   require_text "$out/information-preview.html" '--space-2:8px'
   require_text "$out/information-preview.html" '--space-3:12px'
@@ -103,7 +98,7 @@ run_preview() {
   require_text "$out/information-preview.html" '.CollapsiblePanel.indented .PanelContent::before{position:absolute;top:var(--space-3);bottom:var(--space-3);left:0;width:1px;border-radius:1px;background:#d9dde3;content:""}'
   reject_text "$out/information-preview.html" '.CollapsiblePanel details[open]>summary{border-bottom:'
   reject_text "$out/information-preview.html" 'list-style-position:outside'
-  for component in Button File Markdown TextField Link Card Row Column Tag Divider CollapsiblePanel Image Text ChoicePicker; do
+  for component in Button File Markdown TextField Card Row Column Tag Divider Image Text ChoicePicker; do
     if ! grep -Fq "data-component=\"$component\"" "$out/preview.html" "$out/information-preview.html"; then
       echo "acceptance failed: component $component is absent from the preview matrix" >&2
       exit 1
@@ -111,7 +106,7 @@ run_preview() {
   done
   bash "$repo_root/scripts/card/render-recipe-gallery.sh" --binary "$binary" --out "$out/gallery" > "$out/gallery.log"
   require_text "$out/gallery/gallery-status.json" '"status":"PASS"'
-  printf '{"layer":"preview","status":"PASS","cards":7,"components":14,"previewKind":"reference_preview","interactionSimulation":true,"interactionExecution":"%s","gallery":"gallery/index.html","remoteSideEffects":false,"realRenderer":false}\n' "$interaction_execution" > "$out/preview-status.json"
+  printf '{"layer":"preview","status":"PASS","cards":5,"components":12,"previewKind":"reference_preview","interactionSimulation":true,"interactionExecution":"%s","gallery":"gallery/index.html","remoteSideEffects":false,"realRenderer":false}\n' "$interaction_execution" > "$out/preview-status.json"
 }
 
 require_text() {

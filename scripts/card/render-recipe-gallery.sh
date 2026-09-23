@@ -32,7 +32,7 @@ run_dws() {
     "$binary" "$@"
 }
 
-recipes=(notification information approval task schedule report form)
+recipes=(notification information task schedule form)
 run_dws card recipe list --format json > "$out/recipe-list.json"
 registered_count="$(grep -o '"name"' "$out/recipe-list.json" | wc -l | tr -d ' ')"
 if [[ "$registered_count" != "${#recipes[@]}" ]]; then
@@ -56,15 +56,11 @@ for recipe in "${recipes[@]}"; do
   grep -Fq 'data-component="Card"' "$preview" || { echo "$recipe preview has no Card" >&2; exit 1; }
 done
 
-grep -Fq 'data-component-id="decision_title"' "$out/approval-preview.html" || { echo "approval recipe has no decision section" >&2; exit 1; }
-grep -Fq '审批意见（选填）' "$out/approval-preview.html" || { echo "approval recipe has no approval comment field" >&2; exit 1; }
-grep -Fq 'data-event-name="approval_submit"' "$out/approval-preview.html" || { echo "approval recipe has no approval submit event" >&2; exit 1; }
-if grep -Fq 'data-component-id="form_fields"' "$out/approval-preview.html"; then
-  echo "approval recipe unexpectedly uses the data-entry field container" >&2
-  exit 1
-fi
-grep -Fq 'data-component-id="form_intro"' "$out/form-preview.html" || { echo "form recipe has no collection instruction" >&2; exit 1; }
 grep -Fq 'data-component-id="form_fields"' "$out/form-preview.html" || { echo "form recipe has no grouped field container" >&2; exit 1; }
+grep -Fq 'data-component-id="field_version"' "$out/form-preview.html" || { echo "form recipe has no version input" >&2; exit 1; }
+grep -Fq 'type="checkbox" name="field_platforms"' "$out/form-preview.html" || { echo "form recipe has no multi-select platforms" >&2; exit 1; }
+grep -Fq '<select data-binding-path="/form/environment"' "$out/form-preview.html" || { echo "form recipe has no environment dropdown" >&2; exit 1; }
+grep -Fq 'type="radio" name="field_strategy"' "$out/form-preview.html" || { echo "form recipe has no execution strategy radios" >&2; exit 1; }
 grep -Fq 'data-event-name="form_submit"' "$out/form-preview.html" || { echo "form recipe has no form submit event" >&2; exit 1; }
 grep -Fq 'class="ButtonControl borderless" data-event-name="form_cancel"' "$out/form-preview.html" || { echo "form recipe cancel action is not low emphasis" >&2; exit 1; }
 
@@ -78,7 +74,7 @@ for recipe in "${recipes[@]}"; do
 done
 
 component_count=0
-for component in Button File Markdown TextField Link Card Row Column Tag Divider CollapsiblePanel Image Text ChoicePicker; do
+for component in Button File Markdown TextField Card Row Column Tag Divider Image Text ChoicePicker; do
   if grep -Fq "data-component=\"$component\"" "$out"/*-preview.html; then
     component_count=$((component_count + 1))
   else

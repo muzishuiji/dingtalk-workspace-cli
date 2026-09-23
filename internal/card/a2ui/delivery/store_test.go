@@ -35,6 +35,12 @@ func TestStoreRoundTripAndExtractBizID(t *testing.T) {
 	if got := ExtractBizID(map[string]any{"result": map[string]any{"bizId": "nested"}}); got != "nested" {
 		t.Fatalf("bizId=%q", got)
 	}
+	if got := ExtractCardInstanceID(map[string]any{"result": map[string]any{"cardInstanceId": json.Number("506703919635")}}); got != "506703919635" {
+		t.Fatalf("cardInstanceId=%q", got)
+	}
+	if got := ExtractCardInstanceID(map[string]any{"result": map[string]any{"cardInstanceId": float64(12.5)}}); got != "" {
+		t.Fatalf("nonintegral cardInstanceId=%q", got)
+	}
 }
 
 func TestStoreScopeLockAndRevisionCAS(t *testing.T) {

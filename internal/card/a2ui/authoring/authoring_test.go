@@ -4,6 +4,7 @@
 package authoring
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,7 +27,56 @@ func TestRecipesCompileToValidA2UI(t *testing.T) {
 			if !validation.Valid {
 				t.Fatalf("invalid recipe: %+v", validation.Diagnostics)
 			}
+			components := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+			footerID := "actions_footer"
+			if recipe.Name == "information" {
+				footerID = "actions_section"
+			} else if recipe.Name == "schedule" {
+				footerID = "schedule_body"
+			}
+			foundFooter := false
+			for _, raw := range components {
+				component := raw.(map[string]any)
+				if component["id"] == footerID {
+					foundFooter = true
+					if recipe.Name == "schedule" {
+						if component["padding"] != 16.0 {
+							t.Errorf("schedule body padding=%v, want 16", component["padding"])
+						}
+					} else if component["padding"] != 4.0 || component["gap"] != spacingContent {
+						t.Errorf("%s should use 4px inset and 12px gap: %v", footerID, component)
+					}
+				}
+				if component["id"] == "actions" || component["id"] == "schedule_actions" {
+					if component["padding"] != nil {
+						t.Errorf("button row should not add another inset: %v", component)
+					}
+				}
+			}
+			if !foundFooter {
+				t.Errorf("missing %s", footerID)
+			}
 		})
+	}
+}
+
+func TestRecommendWithMatchDoesNotInferRecipeFromWordFragments(t *testing.T) {
+	for _, intent := range []string{
+		"GitHub issue timestamp format mismatch",
+		"scheduled notice failure",
+		"Summarize service health with metrics, an incident, and one investigation action",
+	} {
+		if recipe, matched := RecommendWithMatch(intent); matched || recipe.Name != "notification" {
+			t.Fatalf("intent %q: recipe=%q matched=%v", intent, recipe.Name, matched)
+		}
+	}
+	if recipe, matched := RecommendWithMatch("notification about a bug"); !matched || recipe.Name != "notification" {
+		t.Fatalf("explicit notification: recipe=%q matched=%v", recipe.Name, matched)
+	}
+	for _, intent := range []string{"service quality report", "服务质量报告"} {
+		if recipe, matched := RecommendWithMatch(intent); !matched || recipe.Name != "information" {
+			t.Fatalf("report intent %q should use the information recipe: recipe=%q matched=%v", intent, recipe.Name, matched)
+		}
 	}
 }
 
@@ -39,9 +89,10 @@ func TestInformationRecipeBuildsAReadableHierarchy(t *testing.T) {
 		Status:          "已完成",
 		Body:            "## 核心结论\n\n目标按计划完成。",
 		ImageURL:        "https://example.com/cover.jpg",
+		ImageFit:        "contain",
 		ImageCaption:    "报告封面",
 		Metrics:         []Metric{{Label: "完成率", Value: "96%"}, {Label: "风险", Value: "0"}},
-		Highlights:      []Highlight{{Title: "核心能力", Detail: "完成验收", Status: "已完成", Theme: "green"}},
+		Highlights:      []Highlight{{Title: "核心能力", Detail: "完成验收", Status: "已完成", Theme: "green"}, {Title: "体验改善", Detail: "耗时下降", Status: "符合预期", Theme: "blue"}},
 		FileName:        "report.pdf",
 		FileURL:         "https://example.com/report.pdf",
 		FilePreviewURL:  "https://example.com/report/preview",
@@ -61,7 +112,7 @@ func TestInformationRecipeBuildsAReadableHierarchy(t *testing.T) {
 		component := raw.(map[string]any)
 		byID[fmt.Sprint(component["id"])] = component
 	}
-	for _, id := range []string{"subtitle", "hero", "metrics", "metric_1", "body", "highlights", "file", "details", "details_content", "detail_link", "actions"} {
+	for _, id := range []string{"subtitle", "hero", "metrics", "metric_panel_1", "metric_panel_2", "metric_1", "body", "highlights", "highlight_panel_1", "highlight_panel_2", "file", "details", "details_content", "actions"} {
 		if byID[id] == nil {
 			t.Errorf("compiled information card is missing hierarchy component %q", id)
 		}
@@ -69,11 +120,14 @@ func TestInformationRecipeBuildsAReadableHierarchy(t *testing.T) {
 	if got := byID["status"]["theme"]; got != "green" {
 		t.Errorf("completed status theme = %v, want green", got)
 	}
-	if got := byID["details"]["defaultExpanded"]; got != false {
-		t.Errorf("details defaultExpanded = %v, want false", got)
+	if got := byID["details"]["component"]; got != "Column" {
+		t.Errorf("information details component = %v, want always-visible Column", got)
 	}
 	if got := fmt.Sprint(byID["details"]["children"]); got != "[details_content]" {
 		t.Errorf("details children = %v, want padded content wrapper", got)
+	}
+	if got := fmt.Sprint(byID["details_content"]["children"]); got != "[details_body]" || byID["detail_link"] != nil {
+		t.Errorf("information details must not duplicate the primary report action: children=%v link=%v", got, byID["detail_link"])
 	}
 	if got := byID["details_content"]["padding"]; got != 12.0 {
 		t.Errorf("details content padding = %v, want 12", got)
@@ -81,27 +135,83 @@ func TestInformationRecipeBuildsAReadableHierarchy(t *testing.T) {
 	if got := byID["details_content"]["gap"]; got != 8.0 {
 		t.Errorf("details content gap = %v, want 8", got)
 	}
+	if got := fmt.Sprint(byID["details_body"]["content"]); !strings.Contains(got, "> **数据口径与补充说明**") || !strings.Contains(got, "> 按验收结果计算。") {
+		t.Errorf("information details must use a visible Markdown quote, got %q", got)
+	}
 	if got := byID["file"]["previewUrl"]; got != "https://example.com/report/preview" {
 		t.Errorf("file previewUrl = %v", got)
 	}
-	if got := byID["root"]["padding"]; got != 12.0 {
-		t.Errorf("root card padding = %v, want 12", got)
+	if got := byID["hero"]["fit"]; got != "contain" {
+		t.Errorf("information chart fit = %v, want contain", got)
+	}
+	if got := byID["root"]["padding"]; got != 0.0 {
+		t.Errorf("root card padding = %v, want 0 for full-width header", got)
 	}
 	if got := byID["root"]["backgroundColor"]; got != "#00FFFFFF" {
-		t.Errorf("root card background = %v, want transparent", got)
+		t.Errorf("root card background = %v, want transparent host inheritance", got)
 	}
-	if got := byID["content"]["gap"]; got != 8.0 {
-		t.Errorf("top-level block gap = %v, want 8", got)
+	if got := byID["content"]["gap"]; got != 0.0 {
+		t.Errorf("top-level block gap = %v, want 0", got)
 	}
-	if got := byID["metric_1"]["padding"]; got != 12.0 {
-		t.Errorf("surfaced block padding = %v, want 12", got)
+	if got := byID["body_content"]["padding"]; got != 12.0 {
+		t.Errorf("body padding = %v, want 12", got)
+	}
+	if header := byID["header"]; header["component"] != "CardHeader" || header["theme"] != "blue" || header["trailing"] != "status" {
+		t.Errorf("information header should own the themed background and status: %v", header)
+	}
+	for _, field := range []string{"borderWidth", "borderColorToken", "cornerRadius"} {
+		if _, ok := byID["header"][field]; ok {
+			t.Errorf("header must not inherit content-panel field %s", field)
+		}
+	}
+	for _, pair := range [][2]string{{"metric_panel_1", "metric_1"}, {"metric_panel_2", "metric_2"}, {"highlight_panel_1", "highlight_1"}, {"highlight_panel_2", "highlight_2"}} {
+		panel := byID[pair[0]]
+		if panel["component"] != "Card" || panel["child"] != pair[1] || panel["backgroundColorToken"] != "common_fg_z1_color" || panel["borderWidth"] != 0.5 || panel["borderColorToken"] != "common_line_hard_color" || panel["padding"] != 12.0 || panel["cornerRadius"] != 8.0 {
+			t.Errorf("%s does not match the ordinary content-panel contract: %v", pair[0], panel)
+		}
+	}
+	if got := fmt.Sprint(byID["body_content"]["children"]); got != "[summary_section metrics_section highlights_section attachment_section details actions_section]" {
+		t.Errorf("information sections must follow conclusion, evidence, progress, and artifacts: %v", got)
+	}
+	if got := byID["body_content"]["gap"]; got != 16.0 {
+		t.Errorf("information section gap = %v, want 16", got)
+	}
+	for _, section := range []struct {
+		id       string
+		children string
+	}{
+		{"summary_section", "[body subtitle hero image_caption]"},
+		{"metrics_section", "[metrics_title metrics]"},
+		{"highlights_section", "[highlights_title highlights]"},
+		{"attachment_section", "[divider_attachment attachment_title file]"},
+		{"actions_section", "[divider_actions actions]"},
+	} {
+		wantGap := 8.0
+		if section.id == "actions_section" {
+			wantGap = 12.0
+		}
+		if got := fmt.Sprint(byID[section.id]["children"]); got != section.children || byID[section.id]["gap"] != wantGap {
+			t.Errorf("%s should keep related content together: %v", section.id, byID[section.id])
+		}
+	}
+	if got := byID["attachment_title"]["text"]; got != "结果产物" {
+		t.Errorf("information attachment heading = %v, want result artifacts", got)
+	}
+	if got := fmt.Sprint(byID["metrics"]["children"]); got != "[metric_panel_1 metric_panel_2]" {
+		t.Errorf("metric panels must be separate siblings, got %v", got)
+	}
+	if got := fmt.Sprint(byID["highlights"]["children"]); got != "[highlight_panel_1 highlight_panel_2]" {
+		t.Errorf("highlight panels must be separate siblings, got %v", got)
+	}
+	if got := byID["metric_panel_1"]["weight"]; got != 1.0 {
+		t.Errorf("metric panel weight = %v, want 1", got)
 	}
 	if got := byID["highlight_1"]["gap"]; got != 8.0 {
 		t.Errorf("highlight row gap = %v, want 8", got)
 	}
 	for _, id := range []string{"metric_1", "highlight_1"} {
 		if _, ok := byID[id]["backgroundColorToken"]; ok {
-			t.Errorf("%s must stay transparent unless the caller requests a surface", id)
+			t.Errorf("%s must inherit its own panel surface", id)
 		}
 	}
 }
@@ -143,27 +253,93 @@ func TestSurfacePoliciesKeepCardsReadableWithoutInventingWireFields(t *testing.T
 	}
 }
 
-func TestBackgroundDefaultsToTransparentAndAllowsExplicitOverride(t *testing.T) {
-	compileBackground := func(background string) any {
+func TestRootCardBackgroundMustBeTransparent(t *testing.T) {
+	compileBackground := func(background string) (any, bool) {
 		t.Helper()
 		messages, err := Compile(Spec{Recipe: "notification", SurfaceID: "background", Title: "通知", Body: "内容", BackgroundColor: background})
 		if err != nil {
 			t.Fatal(err)
 		}
 		components := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
-		return components[0].(map[string]any)["backgroundColor"]
+		got, ok := components[0].(map[string]any)["backgroundColor"]
+		return got, ok
 	}
-	if got := compileBackground(""); got != "#00FFFFFF" {
-		t.Errorf("default background=%v, want transparent", got)
+	if got, ok := compileBackground(""); !ok || got != "#00FFFFFF" {
+		t.Errorf("default background=%v, want transparent host inheritance", got)
 	}
-	if got := compileBackground("#FFE8F3FF"); got != "#FFE8F3FF" {
-		t.Errorf("explicit background=%v", got)
+	if got, ok := compileBackground("#00FFFFFF"); !ok || got != "#00FFFFFF" {
+		t.Errorf("explicit transparent background=%v", got)
+	}
+	if _, err := Compile(Spec{Recipe: "notification", SurfaceID: "opaque-root", Title: "通知", Body: "内容", BackgroundColor: "#FFE8F3FF"}); err == nil {
+		t.Fatal("opaque root Card background must be rejected")
 	}
 }
 
-func TestSixteenSemanticBlocksAreRegistered(t *testing.T) {
-	if got := len(Blocks()); got != 16 {
-		t.Fatalf("blocks=%d, want 16", got)
+func TestSeventeenSemanticBlocksAreRegistered(t *testing.T) {
+	if got := len(Blocks()); got != 17 {
+		t.Fatalf("blocks=%d, want 17", got)
+	}
+}
+
+func TestContentSectionBlockUsesCanonicalCardTokens(t *testing.T) {
+	var section *Block
+	for _, block := range Blocks() {
+		if block.Name == "content-panel" {
+			candidate := block
+			section = &candidate
+			break
+		}
+	}
+	if section == nil {
+		t.Fatal("content-panel block is not registered")
+	}
+	if got := strings.Join(section.Components, ","); got != "Card,Column" {
+		t.Errorf("components=%q, want Card,Column", got)
+	}
+	for _, want := range []string{"padding=12", "cornerRadius=8", "borderWidth=0.5"} {
+		if !strings.Contains(section.Layout, want) {
+			t.Errorf("layout %q is missing %q", section.Layout, want)
+		}
+	}
+	if len(section.Styles) != 2 {
+		t.Fatalf("styles=%d, want 2", len(section.Styles))
+	}
+	ordinary, highlight := section.Styles[0], section.Styles[1]
+	if ordinary.Name != "ordinary" || ordinary.BackgroundColorToken != "common_fg_z1_color" || ordinary.BorderWidth != 0.5 || ordinary.BorderColorToken != "common_line_hard_color" {
+		t.Errorf("ordinary style=%+v", ordinary)
+	}
+	if highlight.Name != "highlight" || highlight.BackgroundColorToken != "extended_*0_color" || highlight.BorderWidth != 0.5 || highlight.BorderColorToken != "extended_*1_color" || !strings.Contains(highlight.Constraint, "同一 extended 色系") {
+		t.Errorf("highlight style=%+v", highlight)
+	}
+	rules := strings.Join(section.Rules, "\n")
+	for _, want := range []string{"common_fg_z1_color", "common_line_hard_color", "extended_*0_color", "extended_*1_color", "同色系", "borderWidth=0.5"} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("rules are missing %q", want)
+		}
+	}
+}
+
+func TestContentSectionStylesValidateAgainstA2UIProtocol(t *testing.T) {
+	registry, err := protocol.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := registry.Validate([]map[string]any{{
+		"version": "v1.0",
+		"createSurface": map[string]any{
+			"surfaceId": "content-panel-styles",
+			"catalogId": registry.Catalog().CatalogID,
+			"components": []any{
+				map[string]any{"id": "root", "component": "Column", "children": []any{"ordinary", "highlight"}, "gap": 8.0},
+				map[string]any{"id": "ordinary", "component": "Card", "child": "ordinary-content", "padding": 12.0, "cornerRadius": 8.0, "backgroundColorToken": "common_fg_z1_color", "borderWidth": 0.5, "borderColorToken": "common_line_hard_color"},
+				map[string]any{"id": "ordinary-content", "component": "Text", "text": "普通区块"},
+				map[string]any{"id": "highlight", "component": "Card", "child": "highlight-content", "padding": 12.0, "cornerRadius": 8.0, "backgroundColorToken": "extended_blue0_color", "borderWidth": 0.5, "borderColorToken": "extended_blue1_color"},
+				map[string]any{"id": "highlight-content", "component": "Text", "text": "高亮区块"},
+			},
+		},
+	}}, "create")
+	if !result.Valid {
+		t.Fatalf("content-panel styles must match the public A2UI protocol: %+v", result.Diagnostics)
 	}
 }
 
@@ -181,7 +357,7 @@ func TestNotificationRecipesUseCompactHeaderBlock(t *testing.T) {
 			t.Errorf("compact notification layout=%q, want CardHeader", block.Layout)
 		}
 	}
-	for _, recipe := range []string{"schedule", "task"} {
+	for _, recipe := range []string{"task"} {
 		messages, err := Compile(Spec{Recipe: recipe, SurfaceID: "compact-" + recipe, Title: "待处理事项", Status: "进行中", Body: "请及时处理。"})
 		if err != nil {
 			t.Fatal(err)
@@ -207,6 +383,123 @@ func TestNotificationRecipesUseCompactHeaderBlock(t *testing.T) {
 	}
 }
 
+func TestScheduleRecipeUsesMeetingDetailsWithoutConflictScaffolding(t *testing.T) {
+	messages, err := Compile(Spec{
+		Recipe: "schedule", SurfaceID: "meeting-schedule", Title: "Schedule", Body: "Design review",
+		ScheduleTime: "Sep 24, 01:00–02:00 (GMT+8)", MeetingURL: "https://example.com/meeting",
+		MeetingState: "Not started", MeetingNumber: "249 643 090", PrimaryCTA: "Accept",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range updates {
+		component := raw.(map[string]any)
+		byID[component["id"].(string)] = component
+	}
+	if byID["header"]["theme"] != "green" || byID["header"]["trailing"] != nil {
+		t.Errorf("meeting header = %v", byID["header"])
+	}
+	if byID["meeting_title"]["sizeToken"] != "common_h2_text_style__font_size" {
+		t.Errorf("meeting title should retain its heading size")
+	}
+	if got := fmt.Sprint(byID["schedule_body"]["children"]); got != "[meeting_title meeting_time_row meeting_join_row schedule_actions]" {
+		t.Errorf("meeting content order = %s", got)
+	}
+	if byID["meeting_join"]["component"] != "Link" || byID["meeting_meta"] == nil || byID["primary_button"]["disabled"] != false || byID["primary_button"]["variant"] != "primary" {
+		t.Errorf("meeting link, metadata, or enabled accept action is missing")
+	}
+	if byID["primary_label"]["text"] != "Accept" || byID["primary_button"]["action"].(map[string]any)["event"].(map[string]any)["name"] != "schedule_accept" {
+		t.Errorf("meeting accept action is not wired")
+	}
+	for _, id := range []string{"time_icon", "meeting_icon"} {
+		icon := byID[id]
+		if icon["component"] != "Image" || icon["variant"] != "icon" || icon["previewEnabled"] != false {
+			t.Errorf("%s should be a non-preview 24px image icon: %v", id, icon)
+		}
+		if url, ok := icon["url"].(string); !ok || !strings.HasPrefix(url, "data:image/svg+xml;base64,") {
+			t.Errorf("%s should contain an inline SVG icon", id)
+		} else {
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(url, "data:image/svg+xml;base64,"))
+			if err != nil || !strings.Contains(string(decoded), map[string]string{"time_icon": "#1F2329", "meeting_icon": "#007FFF"}[id]) {
+				t.Errorf("%s icon color should match its text", id)
+			}
+		}
+	}
+	if byID["meeting_time_row"]["gap"] != spacingTight || byID["meeting_join_row"]["gap"] != spacingTight {
+		t.Errorf("meeting icons should use the compact icon/text gap")
+	}
+	for _, id := range []string{"subtitle", "details", "compact_body", "secondary_button"} {
+		if byID[id] != nil {
+			t.Errorf("meeting card still contains unrelated %s", id)
+		}
+	}
+}
+
+func TestInformationMetricsUseLabeledThemedTiles(t *testing.T) {
+	messages, err := Compile(Spec{
+		Recipe: "information", SurfaceID: "themed-metrics", Title: "Quarterly review", Body: "The team met its goal.",
+		Metrics: []Metric{{Label: "Completion", Value: "96%", Theme: "green"}, {Label: "On time", Value: "18 / 19", Theme: "blue"}, {Label: "Risk", Value: "0", Theme: "orange"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range updates {
+		component := raw.(map[string]any)
+		byID[component["id"].(string)] = component
+	}
+	for i, theme := range []string{"green", "blue", "orange"} {
+		panel := byID[fmt.Sprintf("metric_panel_%d", i+1)]
+		column := byID[fmt.Sprintf("metric_%d", i+1)]
+		value := byID[fmt.Sprintf("metric_value_%d", i+1)]
+		label := byID[fmt.Sprintf("metric_label_%d", i+1)]
+		if panel["backgroundColorToken"] != "extended_"+theme+"0_color" || panel["backgroundColor"] != metricBackground(theme) || panel["cornerRadius"] != 0.0 || panel["borderWidth"] != nil || panel["borderColorToken"] != nil {
+			t.Errorf("%s tile surface = %v", theme, panel)
+		}
+		if got := fmt.Sprint(column["children"]); got != fmt.Sprintf("[metric_label_%d metric_value_%d]", i+1, i+1) {
+			t.Errorf("%s tile reading order = %s", theme, got)
+		}
+		if column["gap"] != spacingTight || label["variant"] != "body" {
+			t.Errorf("%s tile text hierarchy = %v, %v", theme, column, label)
+		}
+		if value["colorToken"] != "extended_"+theme+"6_color" || value["customLightColor"] != metricValueColor(theme) || value["customDarkColor"] != metricDarkValueColor(theme) {
+			t.Errorf("%s tile value color = %v", theme, value)
+		}
+	}
+}
+
+func TestTaskRecipeKeepsCompletionCriteriaVisible(t *testing.T) {
+	messages, err := Compile(Spec{
+		Recipe: "task", SurfaceID: "task-criteria", Title: "Fix login", Status: "In progress",
+		Body:      "### Progress\n\n- Regression checks are running",
+		Details:   "### Completion criteria\n\n1. Login works on refresh",
+		DetailURL: "https://example.com/task", PrimaryCTA: "Update progress",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range updates {
+		component := raw.(map[string]any)
+		byID[fmt.Sprint(component["id"])] = component
+	}
+	if got := fmt.Sprint(byID["compact_body"]["children"]); !strings.Contains(got, "body task_criteria") {
+		t.Errorf("task progress and completion criteria should be adjacent, got %s", got)
+	}
+	if got := byID["task_criteria"]["content"]; got != "### Completion criteria\n\n1. Login works on refresh" {
+		t.Errorf("task completion criteria = %v", got)
+	}
+	for _, id := range []string{"details", "details_content", "detail_link"} {
+		if byID[id] != nil {
+			t.Errorf("task should not contain generic detail component %s", id)
+		}
+	}
+}
+
 func TestResolveRecipeReportsTheEffectiveDefault(t *testing.T) {
 	got, err := ResolveRecipe(Spec{Title: "普通通知", Body: "处理完成"})
 	if err != nil {
@@ -217,6 +510,57 @@ func TestResolveRecipeReportsTheEffectiveDefault(t *testing.T) {
 	}
 	if _, err := ResolveRecipe(Spec{Recipe: "missing"}); err == nil {
 		t.Fatal("expected unknown recipe rejection")
+	}
+	if _, err := ResolveRecipe(Spec{Recipe: "report"}); err == nil {
+		t.Fatal("the duplicate report recipe should not remain selectable")
+	}
+	if _, err := ResolveRecipe(Spec{Recipe: "approval"}); err == nil {
+		t.Fatal("the redundant approval recipe should not remain selectable")
+	}
+}
+
+func TestBuiltInRecipesUseFullWidthBorderlessHeader(t *testing.T) {
+	for _, recipe := range []string{"notification", "information", "form"} {
+		t.Run(recipe, func(t *testing.T) {
+			messages, err := Compile(Spec{Recipe: recipe, SurfaceID: "header-" + recipe, Title: "标题", Status: "进行中", Body: "说明"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			updates := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+			byID := map[string]map[string]any{}
+			for _, raw := range updates {
+				component := raw.(map[string]any)
+				byID[component["id"].(string)] = component
+			}
+			if byID["root"]["padding"] != float64(0) || byID["content"]["gap"] != float64(0) {
+				t.Fatalf("%s root layout must let header fill the card", recipe)
+			}
+			if got := fmt.Sprint(byID["content"]["children"]); got != "[header body_content]" {
+				t.Fatalf("%s content children = %s", recipe, got)
+			}
+			header := byID["header"]
+			if recipe == "notification" || recipe == "information" {
+				if header["component"] != "CardHeader" || header["theme"] != "blue" || header["trailing"] != "status" {
+					t.Fatalf("%s themed header = %+v", recipe, header)
+				}
+			} else if header["component"] != "Column" || header["backgroundColorToken"] != nil {
+				t.Fatalf("%s should use a quiet header without a painted surface: %+v", recipe, header)
+			}
+			for _, field := range []string{"borderWidth", "borderColorToken", "cornerRadius"} {
+				if _, ok := header[field]; ok {
+					t.Errorf("%s header has unsolicited %s", recipe, field)
+				}
+			}
+			if byID["body_content"]["padding"] != float64(12) {
+				t.Errorf("%s body inset = %v", recipe, byID["body_content"]["padding"])
+			}
+			if recipe != "notification" && recipe != "information" && (byID["title"]["colorToken"] != "common_level1_base_color" || byID["title"]["weight"] != float64(1)) {
+				t.Errorf("%s title styling = %+v", recipe, byID["title"])
+			}
+			if _, exists := byID["divider_top"]; exists {
+				t.Errorf("%s contains redundant divider_top", recipe)
+			}
+		})
 	}
 }
 
@@ -240,7 +584,7 @@ func TestImageTextItemBlockDeclaresCompactHorizontalContract(t *testing.T) {
 	}
 }
 
-func TestApprovalAndFormRecipesHaveDistinctInformationArchitecture(t *testing.T) {
+func TestFormRecipeInformationArchitecture(t *testing.T) {
 	compile := func(recipe string) map[string]map[string]any {
 		t.Helper()
 		messages, err := Compile(Spec{
@@ -263,32 +607,15 @@ func TestApprovalAndFormRecipesHaveDistinctInformationArchitecture(t *testing.T)
 		return result
 	}
 
-	approval := compile("approval")
 	form := compile("form")
-	if approval["decision_title"] == nil || approval["form_fields"] != nil {
-		t.Fatal("approval must expose a decision flow without the form field container")
-	}
-	if got := approval["choice"]["label"]; got != "处理结果" {
-		t.Errorf("approval choice label = %v", got)
-	}
-	if got := approval["comment"]["label"]; got != "审批意见（选填）" {
-		t.Errorf("approval comment label = %v", got)
-	}
-	if got := eventName(approval["primary_button"]); got != "approval_submit" {
-		t.Errorf("approval primary event = %q", got)
-	}
-	if got := eventName(approval["secondary_button"]); got != "approval_return" {
-		t.Errorf("approval secondary event = %q", got)
-	}
-
 	if form["form_intro"] == nil || form["form_fields"] == nil || form["decision_title"] != nil {
 		t.Fatal("form must expose an instruction and grouped fields without approval decision chrome")
 	}
 	if got := form["form_fields"]["children"]; fmt.Sprint(got) != "[comment choice]" {
 		t.Errorf("form field order = %v", got)
 	}
-	if got := form["form_fields"]["padding"]; got != 12.0 {
-		t.Errorf("form field container padding = %v", got)
+	if got := form["form_fields"]["padding"]; got != nil {
+		t.Errorf("form field container adds nested padding = %v", got)
 	}
 	if got := form["choice"]["label"]; got != "执行方式" {
 		t.Errorf("form choice label = %v", got)
@@ -301,6 +628,62 @@ func TestApprovalAndFormRecipesHaveDistinctInformationArchitecture(t *testing.T)
 	}
 	if got := eventName(form["secondary_button"]); got != "form_cancel" {
 		t.Errorf("form secondary event = %q", got)
+	}
+}
+
+func TestFormRecipeCompilesReleaseFieldsWithIndependentBindings(t *testing.T) {
+	messages, err := Compile(Spec{
+		Recipe: "form", SurfaceID: "release-form", Title: "Release details", Body: "Complete the release details.",
+		PrimaryCTA: "Submit",
+		FormFields: []FormField{
+			{ID: "version", Label: "Version", Kind: "text"},
+			{ID: "notes", Label: "Notes", Kind: "longText"},
+			{ID: "platforms", Label: "Platforms", Kind: "checkbox", Options: []FormOption{{Label: "Web", Value: "web"}, {Label: "iOS", Value: "ios"}}},
+			{ID: "environment", Label: "Environment", Kind: "dropdown", Options: []FormOption{{Label: "Staging", Value: "staging"}}},
+			{ID: "strategy", Label: "Strategy", Kind: "radio", Options: []FormOption{{Label: "Gradual", Value: "gradual"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range updates {
+		component := raw.(map[string]any)
+		byID[fmt.Sprint(component["id"])] = component
+	}
+	if got := fmt.Sprint(byID["form_fields"]["children"]); got != "[field_version field_notes field_platforms_group field_environment_group field_strategy_group]" {
+		t.Errorf("release field order = %s", got)
+	}
+	if got := byID["form_fields"]["padding"]; got != nil {
+		t.Errorf("release field container adds nested padding = %v", got)
+	}
+	if got := byID["field_version"]["variant"]; got != "shortText" {
+		t.Errorf("version variant = %v", got)
+	}
+	if got := byID["field_notes"]["variant"]; got != "longText" {
+		t.Errorf("notes variant = %v", got)
+	}
+	for id, want := range map[string][2]string{
+		"field_platforms":   {"multipleSelection", "checkbox"},
+		"field_environment": {"mutuallyExclusive", "dropdown"},
+		"field_strategy":    {"mutuallyExclusive", "checkbox"},
+	} {
+		if got := byID[id]; got["variant"] != want[0] || got["displayStyle"] != want[1] {
+			t.Errorf("%s = %v, want variant=%s displayStyle=%s", id, got, want[0], want[1])
+		}
+		if byID[id+"_label"] == nil || byID[id+"_group"] == nil {
+			t.Errorf("%s is missing its visible label group", id)
+		}
+	}
+	form := messages[1]["updateDataModel"].(map[string]any)["value"].(map[string]any)["form"].(map[string]any)
+	for _, id := range []string{"platforms", "environment", "strategy"} {
+		if values, ok := form[id].([]string); !ok || len(values) != 0 {
+			t.Errorf("choice %s must start with an empty string list, got %T %v", id, form[id], form[id])
+		}
+	}
+	if got := eventName(byID["primary_button"]); got != "form_submit" {
+		t.Errorf("submit event = %q", got)
 	}
 }
 
@@ -321,7 +704,7 @@ func containsString(values []string, expected string) bool {
 }
 
 func TestRecommend(t *testing.T) {
-	if got := Recommend("请生成一个审批确认卡片").Name; got != "approval" {
+	if got := Recommend("请生成一个审批确认卡片").Name; got != "form" {
 		t.Fatalf("got %s", got)
 	}
 	if got := Recommend("一般提醒").Name; got != "notification" {
@@ -340,12 +723,15 @@ func TestStatusTagThemeHandlesNegativeFormsBeforeSuccessTokens(t *testing.T) {
 			t.Errorf("statusTagTheme(%q) = %q, want green", value, got)
 		}
 	}
-	messages, err := Compile(Spec{Recipe: "notification", SurfaceID: "default-status", Title: "默认状态", Body: "验证默认状态。"})
+	messages, err := Compile(Spec{Recipe: "notification", SurfaceID: "optional-status", Title: "无状态通知", Body: "无需虚构状态。"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	components := messages[2]["updateComponents"].(map[string]any)["components"].([]any)
-	if got := components[4].(map[string]any)["theme"]; got != "orange" {
-		t.Errorf("default status theme = %v, want orange", got)
+	for _, raw := range components {
+		component := raw.(map[string]any)
+		if component["id"] == "status" {
+			t.Fatal("notification without a status must not invent a Tag")
+		}
 	}
 }

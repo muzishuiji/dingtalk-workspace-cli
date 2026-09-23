@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/buildversion"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/authoring"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/delivery"
 	"github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/card/a2ui/preview"
@@ -74,7 +77,7 @@ func newCardCatalogSearchCommand() *cobra.Command {
 }
 
 func newCardBlockListCommand() *cobra.Command {
-	return NewLeafCommand(LeafSpec{Use: "list", Short: "列出内置语义区块", OutputRollout: output.RolloutUnifiedActive, Safety: readSafety(), Contract: localContract("block_list", "card block list", "列出 15 个常用 A2UI 语义区块及其组件组合", "Agent 要用区块规划卡片信息层次时", "完整卡片优先选择 card recipe", "dws card block list"), ResultCall: func(*cobra.Command, string, map[string]any) (output.CommandResult, error) {
+	return NewLeafCommand(LeafSpec{Use: "list", Short: "列出内置语义区块", OutputRollout: output.RolloutUnifiedActive, Safety: readSafety(), Contract: localContract("block_list", "card block list", "List semantic A2UI blocks for an information plan", "When composing a card from information roles and relationships", "A complete built-in Recipe is optional; custom A2UI composition is supported", "dws card block list"), ResultCall: func(*cobra.Command, string, map[string]any) (output.CommandResult, error) {
 		return output.Success(map[string]any{"blocks": authoring.Blocks()}), nil
 	}})
 }
@@ -181,12 +184,12 @@ func newCardRecipeShowCommand() *cobra.Command {
 }
 
 func newCardGuideRecommendCommand() *cobra.Command {
-	return NewLeafCommand(LeafSpec{Use: "recommend", Short: "根据回复意图推荐 Recipe", OutputRollout: output.RolloutUnifiedActive,
+	return NewLeafCommand(LeafSpec{Use: "recommend", Short: "Plan information hierarchy and suggest an optional Recipe", OutputRollout: output.RolloutUnifiedActive,
 		Flags: []LeafFlag{{Name: "intent", Bind: "intent", Usage: "要表达的内容或交互意图", Required: true, Trim: true}}, Safety: readSafety(),
-		Contract: localContract("guide_recommend", "card guide recommend", "根据内容意图推荐一个 A2UI Recipe 和区块结构", "Agent 尚未决定卡片信息结构时", "已确定 Recipe 时直接使用 card compose", `dws card guide recommend --intent "需要用户审批方案"`),
+		Contract: localContract("guide_recommend", "card guide recommend", "Plan information roles and relationships, then suggest an optional A2UI Recipe", "Before composing a card from content, especially content outside built-in Recipes", "For exact component fields use card catalog get; raw A2UI can be validated with card lint", `dws card guide recommend --intent "需要用户审批方案"`),
 		ResultCall: func(_ *cobra.Command, _ string, args map[string]any) (output.CommandResult, error) {
-			recipe := authoring.Recommend(fmt.Sprint(args["intent"]))
-			return output.Success(map[string]any{"recipe": recipe}), nil
+			guidance := authoring.RecommendComposition(fmt.Sprint(args["intent"]))
+			return output.Success(map[string]any{"recipe": guidance.Recipe, "recipeMatch": guidance.RecipeMatched, "recipeIsOptional": true, "suggestedPath": guidance.SuggestedPath, "reason": guidance.Reason, "informationPlan": authoring.InformationPlan()}), nil
 		},
 	})
 }
@@ -195,15 +198,15 @@ func newCardGuideRulesCommand() *cobra.Command {
 	return NewLeafCommand(LeafSpec{Use: "rules", Short: "列出组件语义和组合规则", OutputRollout: output.RolloutUnifiedActive,
 		Safety: readSafety(), Contract: localContract("guide_rules", "card guide rules", "返回一期组件的场景语义、可靠性约束和视觉规则", "Agent 要自由组合组件或审查设计质量时", "需要精确字段合同使用 card catalog get", "dws card guide rules"),
 		ResultCall: func(*cobra.Command, string, map[string]any) (output.CommandResult, error) {
-			return output.Success(map[string]any{"components": authoring.Guides(), "surfacePolicies": authoring.SurfacePolicies(), "rules": []string{"容器背景默认透明，只有用户明确要求或状态语义需要独立 Surface 时才配置背景", "一张卡只保留一个主操作", "主要阅读顺序使用 Column，Row 最多并列两个长内容", "正文与操作区使用 Divider", "表单输入绑定 DataModel，由提交 Button context 回传", "流式文本使用 appendDataModel，失败后用 updateDataModel 全量检查点校准", "卡片宽度按内容类型选择 SurfacePolicy；公开 A2UI Card 暂无整卡 minWidth 字段，禁止下发私有宽度属性，由宿主 Surface 按策略执行"}}), nil
+			return output.Success(map[string]any{"components": authoring.Guides(), "surfacePolicies": authoring.SurfacePolicies(), "informationPlan": authoring.InformationPlan(), "rules": []string{"When the message root is Card, always set backgroundColor=#00FFFFFF and omit backgroundColorToken; place opaque or themed fills on child components. A root Column may omit fill to show the host bubble.", "Keep one primary action when the card needs an action.", "Use Column for the reading sequence and Row for short peers; check long content at a narrow width.", "Use a Divider only where it clarifies a real semantic boundary; spacing may be enough.", "Bind actual form inputs to DataModel and return their values through the submit action.", "Use appendDataModel for streaming text and updateDataModel for a full checkpoint after failure.", "Select a host SurfacePolicy for content width; public A2UI has no full-card minWidth field, so do not emit a private width property."}}), nil
 		},
 	})
 }
 
 func newCardComposeCommand() *cobra.Command {
-	return NewLeafCommand(LeafSpec{Use: "compose", Short: "把语义 Spec 编译为标准 A2UI 消息", OutputRollout: output.RolloutUnifiedActive,
-		Flags: []LeafFlag{{Name: "file", Bind: "file", Usage: "CompositionSpec JSON 文件，- 表示 stdin", Required: true, Trim: true}, {Name: "output", Bind: "output", Usage: "可选输出文件", Trim: true, OmitEmpty: true}}, Safety: readSafety(),
-		Contract:   localContract("compose", "card compose", "把轻量 CompositionSpec 编译为经过 Schema 校验的 A2UI 对象消息数组", "Agent 已组织好标题、正文、状态和动作，需要生成协议时", "已有 A2UI 消息仅需归一化时使用 card build", "dws card compose --file ./card.json --output ./messages.json"),
+	return NewLeafCommand(LeafSpec{Use: "compose", Short: "Compile the fixed-slot built-in Recipe Spec to A2UI", OutputRollout: output.RolloutUnifiedActive,
+		Flags: []LeafFlag{{Name: "file", Bind: "file", Usage: "Built-in Recipe CompositionSpec JSON file; - reads stdin", Required: true, Trim: true}, {Name: "output", Bind: "output", Usage: "可选输出文件", Trim: true, OmitEmpty: true}}, Safety: readSafety(),
+		Contract:   localContract("compose", "card compose", "Compile the fixed-slot built-in Recipe Spec to Schema-validated A2UI messages", "After card guide suggests review_recipe and the content fits the selected Recipe slots", "For novel layouts compose raw public A2UI and use card lint/build; for existing A2UI wire use card build", "dws card compose --file ./card.json --output ./messages.json"),
 		ResultCall: composeResult,
 	})
 }
@@ -228,12 +231,27 @@ func newCardBuildCommand() *cobra.Command {
 
 func newCardLintCommand() *cobra.Command {
 	return NewLeafCommand(LeafSpec{Use: "lint", Short: "执行 A2UI 协议、引用和设计校验", OutputRollout: output.RolloutUnifiedActive,
-		Flags: []LeafFlag{{Name: "file", Bind: "file", Usage: "A2UI 对象数组、wire 数组或 JSONL，- 表示 stdin", Required: true, Trim: true}, {Name: "mode", Bind: "mode", Usage: "create 或 update", Default: "create", Enum: []string{"create", "update"}}}, Safety: readSafety(),
+		Flags: []LeafFlag{{Name: "file", Bind: "file", Usage: "A2UI 对象数组、wire 数组或 JSONL，- 表示 stdin", Required: true, Trim: true}, {Name: "mode", Bind: "mode", Usage: "create 或 update", Default: "create", Enum: []string{"create", "update"}}, {Name: "design-archetype", Bind: "designArchetype", Usage: "视觉规则的消息类型", Enum: []string{"notification", "approval", "report", "detail", "form", "progress", "information"}}, {Name: "minimum-validation-width", Bind: "minimumValidationWidth", Usage: "设计验收的最小宽度（像素）", Trim: true}, {Name: "debug-host-badge", Bind: "debugHostBadge", Usage: "目标客户端显示 Debug 标识", Kind: LeafBool}}, Safety: readSafety(),
 		Contract: localContract("lint", "card lint", "离线执行 A2UI 消息、组件 Schema、引用图和更新模式校验", "生成或发送前需要快速定位协议问题时", "需要 MCP wire 输出时使用 card build", "dws card lint --file ./messages.json --mode create"),
 		ResultCall: func(_ *cobra.Command, _ string, args map[string]any) (output.CommandResult, error) {
-			_, validation, err := loadAndValidate(fmt.Sprint(args["file"]), fmt.Sprint(args["mode"]))
+			messages, validation, err := loadAndValidate(fmt.Sprint(args["file"]), fmt.Sprint(args["mode"]))
 			if err != nil && validation.BundleVersion == "" {
 				return nil, err
+			}
+			minimumWidth := 0
+			if raw := strings.TrimSpace(fmt.Sprint(args["minimumValidationWidth"])); raw != "" && raw != "<nil>" {
+				minimumWidth, err = strconv.Atoi(raw)
+				if err != nil || minimumWidth < 0 {
+					return nil, apperrors.NewValidation("minimum-validation-width must be a non-negative integer")
+				}
+			}
+			visual := authoring.VisualDiagnostics(messages, authoring.VisualContext{Archetype: strings.TrimSpace(fmt.Sprint(args["designArchetype"])), MinimumValidationWidth: minimumWidth, DebugHostBadge: args["debugHostBadge"] == true})
+			validation.Diagnostics = append(validation.Diagnostics, visual...)
+			for _, diagnostic := range visual {
+				if diagnostic.Severity == "error" {
+					validation.Valid = false
+					err = fmt.Errorf("A2UI visual lint failed")
+				}
 			}
 			if err != nil {
 				return output.Failure(&output.ErrorInfo{Type: "validation", Subtype: "a2ui_validation_failed", Message: err.Error(), Hint: "inspect error.details.validation.diagnostics", Details: map[string]any{"validation": validation}}), nil
@@ -318,7 +336,7 @@ func newCardVerifyCommand() *cobra.Command {
 }
 
 func newCardDoctorCommand() *cobra.Command {
-	return NewLeafCommand(LeafSpec{Use: "doctor", Short: "诊断 A2UI 本地创作与投递依赖", OutputRollout: output.RolloutUnifiedActive, Safety: readSafety(), Contract: localContract("doctor", "card doctor", "分别报告协议包、参考预览、IM 调用接缝和本地台账状态，不发送消息", "A2UI 构建、发送或更新前排查环境时", "它不证明账号授权、群可达或真实客户端渲染", "dws card doctor"), ResultCall: func(*cobra.Command, string, map[string]any) (output.CommandResult, error) {
+	return NewLeafCommand(LeafSpec{Use: "doctor", Short: "诊断 A2UI 本地创作与投递依赖", OutputRollout: output.RolloutUnifiedActive, Safety: readSafety(), Contract: localContract("doctor", "card doctor", "分别报告协议包、参考预览、IM 调用接缝和本地台账状态，不发送消息", "A2UI 构建、发送或更新前排查环境时", "它不证明账号授权、群可达或真实客户端渲染", "dws card doctor"), ResultCall: func(_ *cobra.Command, _ string, _ map[string]any) (output.CommandResult, error) {
 		registry, err := protocol.Load()
 		bundleOK := err == nil
 		stateDir := delivery.DefaultDir()
@@ -333,7 +351,21 @@ func newCardDoctorCommand() *cobra.Command {
 		if registry != nil {
 			componentCount = len(registry.ComponentNames())
 		}
-		return output.Success(map[string]any{"bundle": map[string]any{"ok": bundleOK, "version": protocol.BundleVersion, "components": componentCount}, "preview": map[string]any{"available": true, "kind": "reference_preview", "realRenderer": false}, "transport": map[string]any{"configured": GetCaller() != nil, "liveAuthorization": "unknown"}, "ledger": map[string]any{"path": stateDir, "status": stateStatus}, "sideEffects": "none"}), nil
+		executable, executableErr := os.Executable()
+		binary := map[string]any{"path": executable, "pathAvailable": executableErr == nil, "cliVersion": buildversion.CurrentVersion(), "vcsRevision": "unknown", "vcsModified": "unknown", "goVersion": "unknown"}
+		if info, ok := debug.ReadBuildInfo(); ok {
+			binary["goVersion"] = info.GoVersion
+			for _, setting := range info.Settings {
+				switch setting.Key {
+				case "vcs.revision":
+					binary["vcsRevision"] = setting.Value
+				case "vcs.modified":
+					binary["vcsModified"] = setting.Value
+				}
+			}
+		}
+		capabilities := map[string]any{"a2uiSend": true, "a2uiUpdate": true, "a2uiFinish": true, "a2uiSnapshot": true, "visualLint": true, "semanticBlocks": true}
+		return output.Success(map[string]any{"binary": binary, "capabilities": capabilities, "bundle": map[string]any{"ok": bundleOK, "version": protocol.BundleVersion, "components": componentCount}, "preview": map[string]any{"available": true, "kind": "reference_preview", "realRenderer": false}, "transport": map[string]any{"configured": GetCaller() != nil, "liveAuthorization": "unknown"}, "ledger": map[string]any{"path": stateDir, "status": stateStatus}, "sideEffects": "none"}), nil
 	}})
 }
 
@@ -561,7 +593,8 @@ func sendCardResult(cmd *cobra.Command, _ string, args map[string]any) (output.C
 		bizID = bizCardID
 	}
 	handle := "a2ui-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	record := delivery.Record{Handle: handle, BizID: bizID, Profile: profile, ConversationID: conversationID, ReceiverID: receiverID, Surface: surface, FlowStatus: defaultA2UIFlowStatus, Revision: 1}
+	keyHash := sha256.Sum256([]byte(bizCardID))
+	record := delivery.Record{Handle: handle, BizID: bizID, CardInstanceID: delivery.ExtractCardInstanceID(response), CreateRequestID: requestID, IdempotencyKeySHA256: fmt.Sprintf("%x", keyHash), Profile: profile, ConversationID: conversationID, ReceiverID: receiverID, Surface: surface, FlowStatus: defaultA2UIFlowStatus, Revision: 1}
 	if err := (delivery.Store{Dir: delivery.DefaultDir()}).Save(record); err != nil {
 		return nil, fmt.Errorf("card sent but local ledger save failed for bizId %s: %w", bizID, err)
 	}

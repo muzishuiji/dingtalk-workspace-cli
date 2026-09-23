@@ -7,7 +7,9 @@
 package authoring
 
 import (
+	"encoding/base64"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -46,18 +48,107 @@ type ComponentGuide struct {
 	Reliability string `json:"reliability,omitempty"`
 }
 
+// InformationPlanGuidance is design guidance for the Agent, not a protocol
+// declaration or a recipe compiler. The reader's actual facts determine the
+// number and order of blocks before a built-in Recipe is considered.
+type InformationPlanGuidance struct {
+	Artifact      InformationPlanArtifact `json:"artifact"`
+	Roles         []InformationRole       `json:"roles"`
+	GroupingRules []string                `json:"groupingRules"`
+	VisualRules   []string                `json:"visualRules"`
+	Review        []string                `json:"review"`
+}
+
+type InformationPlanArtifact struct {
+	RequiredFields    []string `json:"requiredFields"`
+	RequiredDecisions []string `json:"requiredDecisions"`
+	PriorityValues    []string `json:"priorityValues"`
+	Instructions      string   `json:"instructions"`
+}
+
+type InformationRole struct {
+	Name      string `json:"name"`
+	Question  string `json:"question"`
+	Treatment string `json:"treatment"`
+}
+
+func InformationPlan() InformationPlanGuidance {
+	return InformationPlanGuidance{
+		Artifact: InformationPlanArtifact{
+			RequiredFields:    []string{"fact", "readerNeed", "group", "priority", "treatment", "componentId", "verification"},
+			RequiredDecisions: []string{"messageArchetype", "headerDecision"},
+			PriorityValues:    []string{"focal", "supporting", "context"},
+			Instructions:      "Create one entry for each preserved fact before selecting components. First classify the message's product job from its facts and user intent (for example notification, detail, approval, report, form, or progress), then choose the presentation. For notification-shaped content, record whether a native themed header supplies stable identity or why a compact custom row is preferable. Classification informs composition but never selects a fixed template by keyword; do not add planning fields to A2UI wire.",
+		},
+		Roles: []InformationRole{
+			{Name: "identity", Question: "What is this and where did it come from?", Treatment: "Subdued source and ID; a short semantic status tag when needed."},
+			{Name: "conclusion", Question: "What happened and why does it matter?", Treatment: "One dominant headline and a concise impact statement if the headline does not carry it."},
+			{Name: "explanation", Question: "What connects the event to its impact?", Treatment: "A short body line adjacent to the conclusion."},
+			{Name: "evidence", Question: "What supports the conclusion?", Treatment: "Group related observations together, with quiet labels and readable values."},
+			{Name: "next_step", Question: "What can the reader do?", Treatment: "One distinct action with a real destination or event; keep proposals labeled as proposals."},
+			{Name: "context", Question: "What might be useful later?", Treatment: "Level-3 text, a detail link, or collapsed content; remove repetition."},
+		},
+		GroupingRules: []string{
+			"Rank the actual facts before selecting components or a Recipe; a Recipe is an optional implementation shortcut.",
+			"Keep cause and impact in the same reading sequence; keep evidence for the same claim in one group; separate evidence from a proposed action.",
+			"Use proximity and spacing to show relationships. Do not turn every sentence into an equally prominent box or repeat the conclusion in several blocks.",
+		},
+		VisualRules: []string{
+			"Use one strongest text focal point. Prefer level-1 for the conclusion, level-2 for explanation, and level-3 for source or incidental metadata.",
+			"Use a semantic Tag or color for status and risk; reserve local fills for bounded semantic regions. Never rely on color alone to express status.",
+			"Muted text must remain readable against its actual surface in both light and dark themes; do not lower contrast just to make metadata quiet.",
+			"Avoid repeated high-contrast inline code pills that overpower the meaning. Use supported Tokens and component fields, not invented styles.",
+		},
+		Review: []string{
+			"Was the message archetype inferred from the user's job, event semantics, expected reading behavior, and action needs before any Recipe or component was selected?",
+			"Do preview and acceptance widths respect the selected SurfacePolicy? Notification and approval cards start at 360px; do not add 240/280px acceptance views unless diagnosing a separately documented host fallback.",
+			"For a notification, alert, or status update, was the native themed header considered explicitly? If used, does it name the notification type while the body keeps the focal event title?",
+			"In three seconds, can the reader name the event and its impact?",
+			"On a second glance, are related evidence and the next step easy to find without rereading the whole card?",
+			"At a narrow conversation width and without color, does the grouping remain clear? Check the actual client; lint and structural preview cannot prove visual acceptance.",
+		},
+	}
+}
+
+type CompositionGuidance struct {
+	SuggestedPath string `json:"suggestedPath"`
+	Reason        string `json:"reason"`
+	RecipeMatched bool   `json:"recipeMatched"`
+	Recipe        Recipe `json:"recipe"`
+}
+
+func RecommendComposition(intent string) CompositionGuidance {
+	recipe, matched := RecommendWithMatch(intent)
+	if !matched {
+		return CompositionGuidance{SuggestedPath: "custom", Reason: "No built-in Recipe intent matched. Build an information plan and compose raw public A2UI components, then use card lint/build.", RecipeMatched: false, Recipe: recipe}
+	}
+	return CompositionGuidance{SuggestedPath: "review_recipe", Reason: "A Recipe intent matched, but its fixed slots are only a candidate after reviewing the content relationships.", RecipeMatched: true, Recipe: recipe}
+}
+
 type Block struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Components  []string `json:"components"`
-	Layout      string   `json:"layout,omitempty"`
-	Rules       []string `json:"rules,omitempty"`
-	Fallback    string   `json:"fallback,omitempty"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Components  []string     `json:"components"`
+	Layout      string       `json:"layout,omitempty"`
+	Styles      []BlockStyle `json:"styles,omitempty"`
+	Rules       []string     `json:"rules,omitempty"`
+	Fallback    string       `json:"fallback,omitempty"`
+}
+
+// BlockStyle publishes a reviewed authoring style. Token values containing '*'
+// are family patterns for author selection, not literal wire values.
+type BlockStyle struct {
+	Name                 string  `json:"name"`
+	BackgroundColorToken string  `json:"backgroundColorToken"`
+	BorderWidth          float64 `json:"borderWidth"`
+	BorderColorToken     string  `json:"borderColorToken"`
+	Constraint           string  `json:"constraint,omitempty"`
 }
 
 type Metric struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+	Theme string `json:"theme,omitempty"`
 }
 
 type Highlight struct {
@@ -66,6 +157,21 @@ type Highlight struct {
 	Status string `json:"status,omitempty"`
 	Theme  string `json:"theme,omitempty"`
 }
+
+type FormOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type FormField struct {
+	ID          string       `json:"id"`
+	Label       string       `json:"label"`
+	Kind        string       `json:"kind"`
+	Placeholder string       `json:"placeholder,omitempty"`
+	Options     []FormOption `json:"options,omitempty"`
+}
+
+var formFieldIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 type Spec struct {
 	Recipe          string      `json:"recipe"`
@@ -76,8 +182,14 @@ type Spec struct {
 	Body            string      `json:"body"`
 	BackgroundColor string      `json:"backgroundColor,omitempty"`
 	ImageURL        string      `json:"imageUrl,omitempty"`
+	ImageFit        string      `json:"imageFit,omitempty"`
 	ImageAlt        string      `json:"imageAlt,omitempty"`
 	ImageCaption    string      `json:"imageCaption,omitempty"`
+	ScheduleTime    string      `json:"scheduleTime,omitempty"`
+	MeetingURL      string      `json:"meetingUrl,omitempty"`
+	MeetingState    string      `json:"meetingState,omitempty"`
+	MeetingNumber   string      `json:"meetingNumber,omitempty"`
+	ActionDisabled  bool        `json:"actionDisabled,omitempty"`
 	Metrics         []Metric    `json:"metrics,omitempty"`
 	Highlights      []Highlight `json:"highlights,omitempty"`
 	FileName        string      `json:"fileName,omitempty"`
@@ -91,6 +203,7 @@ type Spec struct {
 	PrimaryCTA      string      `json:"primaryCta,omitempty"`
 	Secondary       string      `json:"secondaryCta,omitempty"`
 	Options         []string    `json:"options,omitempty"`
+	FormFields      []FormField `json:"formFields,omitempty"`
 }
 
 // A2UI layout values follow the public Catalog's four-point spacing rhythm:
@@ -98,25 +211,22 @@ type Spec struct {
 // 12np inset. Keeping these defaults explicit prevents Recipe-specific magic
 // numbers from drifting away from the renderer contract.
 const (
-	spacingTight              = 4.0
-	spacingBlock              = 8.0
-	spacingContent            = 12.0
-	transparentCardBackground = "#00FFFFFF"
+	spacingTight   = 4.0
+	spacingBlock   = 8.0
+	spacingContent = 12.0
 )
 
 var recipes = []Recipe{
 	{Name: "notification", Description: "一件事、一个状态、一个主要动作的通知", UseWhen: []string{"结果通知", "风险告警", "轻量提醒"}, Blocks: []string{"header", "summary", "actions"}},
-	{Name: "information", Description: "有摘要、媒体、附件和详情入口的信息卡", UseWhen: []string{"信息摘要", "内容推荐", "结果报告"}, Blocks: []string{"header", "hero", "summary", "attachments", "details", "actions"}},
-	{Name: "approval", Description: "先选择审批结论、再补充判断依据的决策卡", UseWhen: []string{"审批确认", "需要给出明确决策"}, Blocks: []string{"header", "facts", "form", "actions", "terminal-status"}},
+	{Name: "information", Description: "Structured information and reports with a summary, evidence, and optional attachments", UseWhen: []string{"信息摘要", "内容推荐", "结果报告"}, Blocks: []string{"header", "summary", "hero", "metrics", "list", "attachments", "details", "actions"}},
 	{Name: "task", Description: "任务状态、说明和处理动作", UseWhen: []string{"任务分派", "待办跟进"}, Blocks: []string{"compact-notification-header", "facts", "summary", "actions"}},
-	{Name: "schedule", Description: "日程冲突或会议提醒", UseWhen: []string{"日程提醒", "冲突处理"}, Blocks: []string{"compact-notification-header", "facts", "summary", "actions"}},
-	{Name: "report", Description: "层次化结论、明细和附件", UseWhen: []string{"分析报告", "执行结果"}, Blocks: []string{"header", "summary", "details", "attachments", "actions"}},
+	{Name: "schedule", Description: "Meeting schedule with time, joining details, and response status", UseWhen: []string{"日程提醒", "会议邀请"}, Blocks: []string{"compact-notification-header", "meeting-title", "meeting-time", "joining-details", "response-status"}},
 	{Name: "form", Description: "按字段组收集信息并统一提交的录入卡", UseWhen: []string{"澄清信息", "用户配置", "补充业务参数"}, Blocks: []string{"header", "form", "actions"}},
 }
 
 var surfacePolicies = []SurfacePolicy{
 	{Name: "notification", Description: "紧凑通知、日程和任务提醒的单列消息面", UseWhen: []string{"notification", "schedule", "task"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"标题或事实值需要多行", "存在两个长操作文案"}, Enforcement: "host-surface-required"},
-	{Name: "standard", Description: "资讯、审批、表单和报告的标准单列消息面", UseWhen: []string{"information", "approval", "form", "report"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"存在宽表格、媒体或较长结构化字段", "内容在 360px 下产生高密度断行"}, Enforcement: "host-surface-required"},
+	{Name: "standard", Description: "Standard single-column surface for information, reports, approvals, and forms", UseWhen: []string{"information", "approval", "form"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"存在宽表格、媒体或较长结构化字段", "内容在 360px 下产生高密度断行"}, Enforcement: "host-surface-required"},
 	{Name: "ai", Description: "思考区、流式 Markdown 和反馈操作组成的 AI 消息面", UseWhen: []string{"ai-streaming", "reasoning", "long-form-ai"}, MinWidth: 360, ObservedHostMinWidth: 320, ObservedHostMaxWidth: 640, WidthMode: "content-adaptive", NarrowViewport: "fit-available-width", WidenWhen: []string{"Markdown 含表格、代码块或宽媒体", "长篇输出在窄宽下明显影响扫读"}, Enforcement: "host-surface-required"},
 }
 
@@ -138,8 +248,9 @@ var guides = map[string]ComponentGuide{
 }
 
 var blocks = []Block{
-	{Name: "header", Description: "标题、来源与状态入口", Components: []string{"Row", "Text", "Tag"}},
+	{Name: "header", Description: "标题、来源与可选状态入口；按消息角色决定是否使用原生主题头部", Components: []string{"CardHeader", "Column", "Row", "Text", "Tag"}, Layout: "Card(padding=0,background=#00FFFFFF) > Column(gap=0) > header + body(padding=12)", Rules: []string{"通知和信息卡使用原生 CardHeader，其主题底色与上下边界由宿主统一绘制；审批、报告和表单默认使用无背景的轻量 Header", "Header 与局部 content-panel 是不同角色，不继承 0.5 描边或局部圆角", "消息根 Card 透明且 padding=0，正文透出宿主气泡并独立设置内边距", "自定义 Header 标题使用一级文本颜色和 h2 字号；只有真实状态才添加右侧 Tag，标题占据剩余宽度"}},
 	{Name: "compact-notification-header", Description: "日程、任务和轻提醒使用的紧凑原生头部", Components: []string{"CardHeader", "Tag", "Column", "Text"}, Layout: "Card(padding=0) > Column(gap=0) > CardHeader(trailing=Tag) + Column(padding=8,gap=8)", Rules: []string{"必须使用 CardHeader 保留完整头部区域，不能用孤立 Tag 替代 header", "CardHeader 使用语义 theme，trailing Tag 只表达短状态", "正文区域使用 8np inset 和 8np 组间距，避免宿主边界与内容容器重复 padding", "空备注、空事实行和无信息增益的 Divider 不进入 children"}, Fallback: "宿主不支持 CardHeader 时退化为 Row(title + status)，正文结构和操作保持不变"},
+	{Name: "content-panel", Description: "带背景、描边、内边距和内容的视觉内容区块", Components: []string{"Card", "Column"}, Layout: "Card(padding=12,cornerRadius=8,borderWidth=0.5) > Column(gap=8) > content", Styles: []BlockStyle{{Name: "ordinary", BackgroundColorToken: "common_fg_z1_color", BorderWidth: 0.5, BorderColorToken: "common_line_hard_color"}, {Name: "highlight", BackgroundColorToken: "extended_*0_color", BorderWidth: 0.5, BorderColorToken: "extended_*1_color", Constraint: "背景与边框必须选择同一 extended 色系，并在最终 JSON 中写完整已注册 Token ID"}}, Rules: []string{"普通区块使用 backgroundColorToken=common_fg_z1_color、borderWidth=0.5、borderColorToken=common_line_hard_color", "高亮区块使用已注册的 extended_*0_color 作为 backgroundColorToken，并使用同色系 extended_*1_color 作为 borderColorToken，borderWidth=0.5", "Card 只有一个 child；多项内容必须先包在 Column 或 Row 中", "区块容器统一负责背景、描边、padding 和圆角；子内容不使用统一 margin 模拟容器 padding", "根 Body 继承宿主气泡背景；content-panel 只用于需要分组或强调的局部内容"}, Fallback: "无法使用 Card 时退化为 Column(padding=12,gap=8)，保留内容层次并移除背景和描边"},
 	{Name: "hero", Description: "关键封面或人物视觉", Components: []string{"Image"}},
 	{Name: "status", Description: "当前阶段或风险状态", Components: []string{"Tag", "Text"}},
 	{Name: "facts", Description: "短标签与值的事实表", Components: []string{"Column", "Row", "Text"}},
@@ -176,17 +287,42 @@ func Guides() []ComponentGuide {
 func Guide(name string) (ComponentGuide, bool) { guide, ok := guides[name]; return guide, ok }
 
 func Recommend(intent string) Recipe {
-	lower := strings.ToLower(intent)
+	recipe, _ := RecommendWithMatch(intent)
+	return recipe
+}
+
+// RecommendWithMatch reports whether the suggestion came from a recognized
+// intent. A fallback is not evidence that the content fits a built-in Recipe.
+func RecommendWithMatch(intent string) (Recipe, bool) {
+	if hasIntentWord(intent, "notification") || strings.Contains(intent, "通知") {
+		return recipes[0], true
+	}
 	for _, candidate := range []string{"approval", "schedule", "task", "form", "report", "information"} {
-		if strings.Contains(lower, candidate) || strings.Contains(intent, map[string]string{"approval": "审批", "schedule": "日程", "task": "任务", "form": "收集", "report": "报告", "information": "信息"}[candidate]) {
+		if hasIntentWord(intent, candidate) || strings.Contains(intent, map[string]string{"approval": "审批", "schedule": "日程", "task": "任务", "form": "收集", "report": "报告", "information": "信息"}[candidate]) {
+			if candidate == "report" {
+				candidate = "information"
+			} else if candidate == "approval" {
+				candidate = "form"
+			}
 			for _, recipe := range recipes {
 				if recipe.Name == candidate {
-					return recipe
+					return recipe, true
 				}
 			}
 		}
 	}
-	return recipes[0]
+	return recipes[0], false
+}
+
+func hasIntentWord(intent, candidate string) bool {
+	for _, word := range strings.FieldsFunc(strings.ToLower(intent), func(r rune) bool {
+		return r < 'a' || r > 'z'
+	}) {
+		if word == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveRecipe returns the effective built-in Recipe without mutating the
@@ -209,6 +345,9 @@ func Compile(spec Spec) ([]map[string]any, error) {
 	if strings.TrimSpace(spec.SurfaceID) == "" || strings.TrimSpace(spec.Title) == "" || strings.TrimSpace(spec.Body) == "" {
 		return nil, fmt.Errorf("surfaceId, title and body are required")
 	}
+	if spec.BackgroundColor != "" && spec.BackgroundColor != "#00FFFFFF" {
+		return nil, fmt.Errorf("root Card backgroundColor must be #00FFFFFF; put opaque fills on child components")
+	}
 	effectiveRecipe, err := ResolveRecipe(spec)
 	if err != nil {
 		return nil, err
@@ -218,42 +357,70 @@ func Compile(spec Spec) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	status := defaultString(spec.Status, "进行中")
-	backgroundColor := defaultString(spec.BackgroundColor, transparentCardBackground)
-	compactHeader := spec.Recipe == "task" || spec.Recipe == "schedule"
-	children := []string{}
-	rootPadding, contentGap := spacingContent, spacingBlock
-	components := []any{}
-	if compactHeader {
-		rootPadding, contentGap = 0, 0
-		components = append(components,
-			map[string]any{"id": "header", "component": "CardHeader", "title": map[string]any{"path": "/content/title"}, "theme": "blue", "trailing": "status", "fallbackMarkdown": "**" + spec.Title + "** · " + status},
-			map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
-		)
-	} else {
-		children = append(children, "header")
-		components = append(components,
-			map[string]any{"id": "header", "component": "Row", "children": []string{"title", "status"}, "align": "center", "gap": spacingBlock},
-			map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "bold": true, "maxLine": 2.0, "weight": 1.0},
-			map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)},
-		)
+	if spec.Recipe == "schedule" {
+		return compileSchedule(spec, registry)
 	}
+	status := strings.TrimSpace(spec.Status)
+	compactHeader := spec.Recipe == "task" || spec.Recipe == "schedule"
+	nativeHeader := compactHeader || spec.Recipe == "notification" || spec.Recipe == "information"
+	if compactHeader && status == "" {
+		status = "进行中"
+	}
+	children := []string{}
+	rootPadding, contentGap := 0.0, 0.0
+	components := []any{}
+	if nativeHeader {
+		rootPadding, contentGap = 0, 0
+		header := map[string]any{"id": "header", "component": "CardHeader", "title": map[string]any{"path": "/content/title"}, "theme": "blue", "fallbackMarkdown": "**" + spec.Title + "**"}
+		if status != "" {
+			header["trailing"] = "status"
+			header["fallbackMarkdown"] = "**" + spec.Title + "** · " + status
+		}
+		components = append(components, header)
+		if status != "" {
+			components = append(components, map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)})
+		}
+	} else {
+		header := map[string]any{"id": "header", "component": "Column", "children": []string{"header_row"}, "padding": spacingContent}
+		headerChildren := []string{"title"}
+		title := map[string]any{"id": "title", "component": "Text", "text": map[string]any{"path": "/content/title"}, "variant": "body", "sizeToken": "common_h2_text_style__font_size", "colorToken": "common_level1_base_color", "bold": true, "maxLine": 1.0}
+		if status != "" {
+			headerChildren = append(headerChildren, "status")
+			title["weight"] = 1.0
+		}
+		components = append(components,
+			header,
+			map[string]any{"id": "header_row", "component": "Row", "children": headerChildren, "align": "center", "gap": spacingBlock},
+			title,
+		)
+		if status != "" {
+			components = append(components, map[string]any{"id": "status", "component": "Tag", "text": map[string]any{"path": "/content/status"}, "theme": statusTagTheme(status)})
+		}
+	}
+	// A Card with no background field paints the catalog's white/dark default.
+	// The built-in recipes use a Card for an edge-to-edge header while keeping
+	// the body on the host bubble surface, so the outer Card must be transparent.
+	root := map[string]any{"id": "root", "component": "Card", "child": "content", "padding": rootPadding, "cornerRadius": 12.0, "backgroundColor": "#00FFFFFF"}
 	components = append([]any{
-		map[string]any{"id": "root", "component": "Card", "child": "content", "padding": rootPadding, "cornerRadius": 12.0, "backgroundColor": backgroundColor},
+		root,
 		map[string]any{"id": "content", "component": "Column", "children": []string{}, "align": "stretch", "gap": contentGap},
 	}, components...)
 	data := map[string]any{"content": map[string]any{"title": spec.Title, "subtitle": spec.Subtitle, "status": status, "body": spec.Body}, "form": map[string]any{}}
+	if spec.Recipe == "information" {
+		children = append(children, "body")
+		components = append(components, map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}})
+	}
 	if spec.Subtitle != "" {
 		children = append(children, "subtitle")
 		components = append(components, map[string]any{"id": "subtitle", "component": "Text", "text": map[string]any{"path": "/content/subtitle"}, "variant": "caption", "color": "gray", "maxLine": 3.0})
 	}
-	if !compactHeader {
-		children = append(children, "divider_top")
-		components = append(components, map[string]any{"id": "divider_top", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"})
-	}
 	if spec.ImageURL != "" {
 		children = append(children, "hero")
-		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": "cover", "variant": "header", "cornerRadius": 10.0, "previewEnabled": true, "accessibility": map[string]any{"label": defaultString(spec.ImageAlt, spec.Title)}})
+		imageFit := "cover"
+		if spec.ImageFit == "contain" {
+			imageFit = "contain"
+		}
+		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": imageFit, "variant": "header", "cornerRadius": 10.0, "previewEnabled": true, "accessibility": map[string]any{"label": defaultString(spec.ImageAlt, spec.Title)}})
 		if spec.ImageCaption != "" {
 			children = append(children, "image_caption")
 			components = append(components, map[string]any{"id": "image_caption", "component": "Text", "text": spec.ImageCaption, "variant": "caption", "color": "gray", "maxLine": 3.0})
@@ -267,17 +434,56 @@ func Compile(spec Spec) ([]map[string]any, error) {
 			metricID := fmt.Sprintf("metric_%d", i+1)
 			valueID := fmt.Sprintf("metric_value_%d", i+1)
 			labelID := fmt.Sprintf("metric_label_%d", i+1)
-			metricChildren = append(metricChildren, metricID)
+			if spec.Recipe == "information" {
+				panelID := fmt.Sprintf("metric_panel_%d", i+1)
+				metricChildren = append(metricChildren, panelID)
+				panel := ordinaryContentPanel(panelID, metricID)
+				if theme := metricTheme(metric.Theme); theme != "" {
+					panel["backgroundColorToken"] = "extended_" + theme + "0_color"
+					panel["backgroundColor"] = metricBackground(theme)
+					panel["cornerRadius"] = 0.0
+					delete(panel, "borderWidth")
+					delete(panel, "borderColorToken")
+				}
+				panel["weight"] = 1.0
+				components = append(components, panel)
+			} else {
+				metricChildren = append(metricChildren, metricID)
+			}
+			metricColumn := map[string]any{"id": metricID, "component": "Column", "children": []string{valueID, labelID}, "gap": spacingBlock, "weight": 1.0}
+			if spec.Recipe != "information" {
+				metricColumn["padding"] = spacingContent
+				metricColumn["cornerRadius"] = 8.0
+			}
+			if spec.Recipe == "information" {
+				metricColumn["children"] = []string{labelID, valueID}
+				metricColumn["gap"] = spacingTight
+			}
+			value := map[string]any{"id": valueID, "component": "Text", "text": metric.Value, "variant": "body", "bold": true, "maxLine": 2.0}
+			if spec.Recipe == "information" {
+				value["sizeToken"] = "common_h2_text_style__font_size"
+				if theme := metricTheme(metric.Theme); theme != "" {
+					value["colorToken"] = "extended_" + theme + "6_color"
+					value["customLightColor"] = metricValueColor(theme)
+					value["customDarkColor"] = metricDarkValueColor(theme)
+				}
+			}
+			label := map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "color": "gray", "maxLine": 2.0}
+			if spec.Recipe == "information" {
+				label = map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "body", "colorToken": "common_level2_base_color", "customLightColor": "#687078", "customDarkColor": "#A8B1BA", "maxLine": 2.0}
+			}
 			components = append(components,
-				map[string]any{"id": metricID, "component": "Column", "children": []string{valueID, labelID}, "gap": spacingTight, "padding": spacingContent, "cornerRadius": 8.0, "weight": 1.0},
-				map[string]any{"id": valueID, "component": "Text", "text": metric.Value, "variant": "body", "bold": true, "maxLine": 2.0},
-				map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "color": "gray", "maxLine": 2.0},
+				metricColumn,
+				value,
+				label,
 			)
 		}
 		components = append(components, map[string]any{"id": "metrics", "component": "Row", "children": metricChildren, "align": "start", "gap": spacingBlock})
 	}
-	children = append(children, "body")
-	components = append(components, map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}})
+	if spec.Recipe != "information" {
+		children = append(children, "body")
+		components = append(components, map[string]any{"id": "body", "component": "Markdown", "content": map[string]any{"path": "/content/body"}})
+	}
 	if len(spec.Highlights) > 0 {
 		children = append(children, "highlights_title", "highlights")
 		highlightChildren := make([]string, 0, len(spec.Highlights))
@@ -289,7 +495,13 @@ func Compile(spec Spec) ([]map[string]any, error) {
 			detailID := fmt.Sprintf("highlight_detail_%d", i+1)
 			tagID := fmt.Sprintf("highlight_status_%d", i+1)
 			copyChildren := []string{titleID}
-			highlightChildren = append(highlightChildren, rowID)
+			if spec.Recipe == "information" {
+				panelID := fmt.Sprintf("highlight_panel_%d", i+1)
+				highlightChildren = append(highlightChildren, panelID)
+				components = append(components, ordinaryContentPanel(panelID, rowID))
+			} else {
+				highlightChildren = append(highlightChildren, rowID)
+			}
 			components = append(components, map[string]any{"id": titleID, "component": "Text", "text": highlight.Title, "variant": "body", "bold": true, "maxLine": 2.0})
 			if highlight.Detail != "" {
 				copyChildren = append(copyChildren, detailID)
@@ -301,12 +513,21 @@ func Compile(spec Spec) ([]map[string]any, error) {
 				rowChildren = append(rowChildren, tagID)
 				components = append(components, map[string]any{"id": tagID, "component": "Tag", "text": highlight.Status, "theme": validTagTheme(highlight.Theme), "variant": "filled"})
 			}
-			components = append(components, map[string]any{"id": rowID, "component": "Row", "children": rowChildren, "align": "center", "gap": spacingBlock, "padding": spacingContent, "cornerRadius": 8.0})
+			row := map[string]any{"id": rowID, "component": "Row", "children": rowChildren, "align": "center", "gap": spacingBlock, "padding": spacingContent, "cornerRadius": 8.0}
+			if spec.Recipe == "information" {
+				delete(row, "padding")
+				delete(row, "cornerRadius")
+			}
+			components = append(components, row)
 		}
 		components = append(components, map[string]any{"id": "highlights", "component": "Column", "children": highlightChildren, "gap": spacingBlock})
 	}
 	if spec.FileURL != "" {
 		children = append(children, "divider_attachment", "attachment_title", "file")
+		attachmentTitle := "交付产物"
+		if spec.Recipe == "information" {
+			attachmentTitle = "结果产物"
+		}
 		file := map[string]any{"id": "file", "component": "File", "fileName": defaultString(spec.FileName, "附件"), "url": spec.FileURL, "description": defaultString(spec.FileDescription, "相关附件"), "onPreview": eventAction("file_preview", spec.SurfaceID)}
 		if spec.FilePreviewURL != "" {
 			file["previewUrl"] = spec.FilePreviewURL
@@ -319,56 +540,122 @@ func Compile(spec Spec) ([]map[string]any, error) {
 		}
 		components = append(components,
 			map[string]any{"id": "divider_attachment", "component": "Divider", "axis": "horizontal", "borderColorToken": "common_line_light_color"},
-			map[string]any{"id": "attachment_title", "component": "Text", "text": "交付产物", "variant": "body", "bold": true},
+			map[string]any{"id": "attachment_title", "component": "Text", "text": attachmentTitle, "variant": "body", "bold": true},
 			file,
 		)
 	}
-	if spec.DetailURL != "" || spec.Details != "" {
+	showDetailLink := spec.DetailURL != "" && spec.Recipe != "task" && !(spec.Recipe == "information" && spec.PrimaryCTA != "")
+	if spec.Recipe == "task" && spec.Details != "" {
+		children = append(children, "task_criteria")
+		components = append(components, map[string]any{"id": "task_criteria", "component": "Markdown", "content": spec.Details})
+	}
+	if spec.Recipe != "task" && (showDetailLink || spec.Details != "") {
 		children = append(children, "details")
 		detailChildren := []string{}
 		if spec.Details != "" {
 			detailChildren = append(detailChildren, "details_body")
-			components = append(components, map[string]any{"id": "details_body", "component": "Markdown", "content": spec.Details})
+			content := spec.Details
+			if spec.Recipe == "information" {
+				content = quoteDetails("数据口径与补充说明", content)
+			}
+			components = append(components, map[string]any{"id": "details_body", "component": "Markdown", "content": content})
 		}
-		if spec.DetailURL != "" {
+		if showDetailLink {
 			detailChildren = append(detailChildren, "detail_link")
 			components = append(components, map[string]any{"id": "detail_link", "component": "Link", "text": "打开完整详情", "action": map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": spec.DetailURL}}}})
 		}
-		components = append(components,
-			map[string]any{"id": "details_content", "component": "Column", "children": detailChildren, "align": "stretch", "gap": spacingBlock, "padding": spacingContent},
-			map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "数据口径与补充说明", "variant": "indented", "defaultExpanded": false, "maxHeight": 240.0, "children": []string{"details_content"}, "fallbackMarkdown": "### 数据口径与补充说明\n\n请打开完整详情查看。"},
-		)
+		components = append(components, map[string]any{"id": "details_content", "component": "Column", "children": detailChildren, "align": "stretch", "gap": spacingBlock, "padding": spacingContent})
+		if spec.Recipe == "information" {
+			components = append(components, map[string]any{"id": "details", "component": "Column", "children": []string{"details_content"}, "align": "stretch"})
+		} else {
+			components = append(components, map[string]any{"id": "details", "component": "CollapsiblePanel", "title": "数据口径与补充说明", "variant": "indented", "defaultExpanded": false, "maxHeight": 240.0, "children": []string{"details_content"}, "fallbackMarkdown": "### 数据口径与补充说明\n\n请打开完整详情查看。"})
+		}
 	}
-	if spec.Recipe == "approval" || spec.Recipe == "form" {
+	if spec.Recipe == "form" {
 		options := spec.Options
 		if len(options) == 0 {
-			if spec.Recipe == "approval" {
-				options = []string{"同意", "需要修改", "拒绝"}
-			} else {
-				options = []string{"选项一", "选项二"}
-			}
+			options = []string{"选项一", "选项二"}
 		}
 		optionValues := make([]any, 0, len(options))
 		for i, option := range options {
 			optionValues = append(optionValues, map[string]any{"label": option, "value": fmt.Sprintf("option_%d", i+1)})
 		}
-		if spec.Recipe == "approval" {
-			children = append(children, "decision_title", "choice", "comment")
-			components = append(components,
-				map[string]any{"id": "decision_title", "component": "Text", "text": "审批决定", "variant": "body", "bold": true},
-				map[string]any{"id": "choice", "component": "ChoicePicker", "label": "处理结果", "variant": "mutuallyExclusive", "displayStyle": "checkbox", "options": optionValues, "value": map[string]any{"path": "/form/choice"}},
-				map[string]any{"id": "comment", "component": "TextField", "label": "审批意见（选填）", "value": map[string]any{"path": "/form/comment"}, "placeholder": "补充判断依据或修改建议", "variant": "longText"},
-			)
+		if len(spec.FormFields) > 0 {
+			fieldChildren := make([]string, 0, len(spec.FormFields))
+			formValues := make(map[string]any, len(spec.FormFields))
+			for _, field := range spec.FormFields {
+				if !formFieldIDPattern.MatchString(field.ID) || strings.TrimSpace(field.Label) == "" {
+					return nil, fmt.Errorf("form field requires a stable id and label")
+				}
+				if _, exists := formValues[field.ID]; exists {
+					return nil, fmt.Errorf("duplicate form field id %q", field.ID)
+				}
+				id := "field_" + field.ID
+				component := map[string]any{"id": id, "value": map[string]any{"path": "/form/" + field.ID}}
+				switch field.Kind {
+				case "text", "longText":
+					fieldChildren = append(fieldChildren, id)
+					component["component"] = "TextField"
+					component["label"] = field.Label
+					component["variant"] = "shortText"
+					if field.Kind == "longText" {
+						component["variant"] = "longText"
+					}
+					if field.Placeholder != "" {
+						component["placeholder"] = field.Placeholder
+					}
+					formValues[field.ID] = ""
+				case "checkbox", "dropdown", "radio":
+					labelID := id + "_label"
+					groupID := id + "_group"
+					fieldChildren = append(fieldChildren, groupID)
+					components = append(components,
+						map[string]any{"id": labelID, "component": "Text", "text": field.Label, "variant": "body", "bold": true},
+						map[string]any{"id": groupID, "component": "Column", "children": []string{labelID, id}, "align": "stretch", "gap": spacingBlock},
+					)
+					if len(field.Options) == 0 {
+						return nil, fmt.Errorf("choice field %q requires options", field.ID)
+					}
+					choices := make([]any, 0, len(field.Options))
+					seen := map[string]bool{}
+					for _, option := range field.Options {
+						if strings.TrimSpace(option.Label) == "" || strings.TrimSpace(option.Value) == "" || seen[option.Value] {
+							return nil, fmt.Errorf("choice field %q requires unique non-empty labels and values", field.ID)
+						}
+						seen[option.Value] = true
+						choices = append(choices, map[string]any{"label": option.Label, "value": option.Value})
+					}
+					component["component"] = "ChoicePicker"
+					component["options"] = choices
+					component["variant"] = "mutuallyExclusive"
+					component["displayStyle"] = "checkbox"
+					if field.Kind == "checkbox" {
+						component["variant"] = "multipleSelection"
+					} else if field.Kind == "dropdown" {
+						component["displayStyle"] = "dropdown"
+						component["label"] = "请选择" + field.Label
+					}
+					formValues[field.ID] = []string{}
+				default:
+					return nil, fmt.Errorf("unsupported form field kind %q", field.Kind)
+				}
+				components = append(components, component)
+			}
+			children = append(children, "form_fields")
+			components = append(components, map[string]any{"id": "form_fields", "component": "Column", "children": fieldChildren, "align": "stretch", "gap": 16.0})
+			data["form"] = formValues
 		} else {
 			children = append(children, "form_intro", "form_fields")
 			components = append(components,
 				map[string]any{"id": "form_intro", "component": "Text", "text": "请完成以下信息", "variant": "body", "bold": true},
-				map[string]any{"id": "form_fields", "component": "Column", "children": []string{"comment", "choice"}, "align": "stretch", "gap": spacingContent, "padding": spacingContent, "cornerRadius": 8.0},
+				map[string]any{"id": "form_fields", "component": "Column", "children": []string{"comment", "choice"}, "align": "stretch", "gap": spacingContent, "cornerRadius": 8.0},
 				map[string]any{"id": "comment", "component": "TextField", "label": "补充信息", "value": map[string]any{"path": "/form/comment"}, "placeholder": "请输入 Agent 继续处理所需的信息", "variant": "longText"},
 				map[string]any{"id": "choice", "component": "ChoicePicker", "label": "执行方式", "variant": "mutuallyExclusive", "displayStyle": "checkbox", "options": optionValues, "value": map[string]any{"path": "/form/choice"}},
 			)
 		}
-		data["form"] = map[string]any{"comment": "", "choice": ""}
+		if len(spec.FormFields) == 0 {
+			data["form"] = map[string]any{"comment": "", "choice": []string{}}
+		}
 	}
 	if spec.PrimaryCTA != "" || spec.Secondary != "" {
 		children = append(children, "divider_actions", "actions")
@@ -394,11 +681,23 @@ func Compile(spec Spec) ([]map[string]any, error) {
 		}
 		components = append(components, map[string]any{"id": "actions", "component": "Row", "children": actionChildren, "align": "center", "gap": spacingBlock})
 	}
+	if spec.Recipe != "information" && len(children) >= 2 && children[len(children)-2] == "divider_actions" && children[len(children)-1] == "actions" {
+		children = append(children[:len(children)-2], "actions_footer")
+		components = append(components, map[string]any{"id": "actions_footer", "component": "Column", "children": []string{"divider_actions", "actions"}, "align": "stretch", "gap": spacingContent, "padding": 4.0})
+	}
 	if compactHeader {
 		components = append(components, map[string]any{"id": "compact_body", "component": "Column", "children": children, "align": "stretch", "gap": spacingBlock, "padding": spacingBlock})
 		components[1].(map[string]any)["children"] = []string{"header", "compact_body"}
 	} else {
-		components[1].(map[string]any)["children"] = children
+		bodyGap := spacingBlock
+		if spec.Recipe == "information" {
+			var sections []any
+			children, sections = groupInformationBody(children)
+			components = append(components, sections...)
+			bodyGap = 16.0
+		}
+		components = append(components, map[string]any{"id": "body_content", "component": "Column", "children": children, "align": "stretch", "gap": bodyGap, "padding": spacingContent})
+		components[1].(map[string]any)["children"] = []string{"header", "body_content"}
 	}
 	messages := []map[string]any{
 		{"version": "v1.0", "createSurface": map[string]any{"surfaceId": spec.SurfaceID, "catalogId": registry.Catalog().CatalogID, "sendDataModel": true}},
@@ -410,6 +709,183 @@ func Compile(spec Spec) ([]map[string]any, error) {
 		return nil, fmt.Errorf("generated recipe failed validation: %+v", validation.Diagnostics)
 	}
 	return messages, nil
+}
+
+func groupInformationBody(children []string) ([]string, []any) {
+	sectionByChild := map[string]string{
+		"body": "summary_section", "subtitle": "summary_section", "hero": "summary_section", "image_caption": "summary_section",
+		"metrics_title": "metrics_section", "metrics": "metrics_section",
+		"highlights_title": "highlights_section", "highlights": "highlights_section",
+		"divider_attachment": "attachment_section", "attachment_title": "attachment_section", "file": "attachment_section",
+		"divider_actions": "actions_section", "actions": "actions_section",
+	}
+	grouped := make([]string, 0, len(children))
+	sections := make([]any, 0, 5)
+	for i := 0; i < len(children); {
+		sectionID := sectionByChild[children[i]]
+		if sectionID == "" {
+			grouped = append(grouped, children[i])
+			i++
+			continue
+		}
+		sectionChildren := []string{}
+		for i < len(children) && sectionByChild[children[i]] == sectionID {
+			sectionChildren = append(sectionChildren, children[i])
+			i++
+		}
+		grouped = append(grouped, sectionID)
+		section := map[string]any{"id": sectionID, "component": "Column", "children": sectionChildren, "align": "stretch", "gap": spacingBlock}
+		if sectionID == "actions_section" {
+			section["gap"] = spacingContent
+			section["padding"] = 4.0
+		}
+		sections = append(sections, section)
+	}
+	return grouped, sections
+}
+
+func ordinaryContentPanel(id, child string) map[string]any {
+	return map[string]any{
+		"id": id, "component": "Card", "child": child,
+		"padding": spacingContent, "cornerRadius": 8.0,
+		"backgroundColorToken": "common_fg_z1_color",
+		"borderWidth":          0.5, "borderColorToken": "common_line_hard_color",
+	}
+}
+
+func metricTheme(theme string) string {
+	switch theme {
+	case "green", "blue", "orange":
+		return theme
+	default:
+		return ""
+	}
+}
+
+func metricBackground(theme string) string {
+	switch theme {
+	case "green":
+		return "#E0F4E6"
+	case "blue":
+		return "#E0F0FF"
+	case "orange":
+		return "#FFF2E0"
+	default:
+		return ""
+	}
+}
+
+func metricValueColor(theme string) string {
+	switch theme {
+	case "green":
+		return "#008A2A"
+	case "blue":
+		return "#006ACC"
+	case "orange":
+		return "#B85C00"
+	default:
+		return ""
+	}
+}
+
+func metricDarkValueColor(theme string) string {
+	switch theme {
+	case "green":
+		return "#3EAA5F"
+	case "blue":
+		return "#3E91E4"
+	case "orange":
+		return "#E39D3E"
+	default:
+		return ""
+	}
+}
+
+func scheduleIcon(path, color string) string {
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%s" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">%s</svg>`, color, path)
+	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+}
+
+const (
+	clockIconPath = `<circle cx="12" cy="12" r="7"/><path d="M12 8.5v3.5l2 1.5"/>`
+	videoIconPath = `<rect x="5" y="7" width="10" height="10" rx="1.5"/><path d="m15 9 4-2v10l-4-2"/>`
+)
+
+func compileSchedule(spec Spec, registry *protocol.Registry) ([]map[string]any, error) {
+	children := []string{"meeting_title"}
+	components := []any{
+		map[string]any{"id": "root", "component": "Card", "child": "content", "padding": 0.0, "cornerRadius": 12.0, "backgroundColor": "#00FFFFFF"},
+		map[string]any{"id": "content", "component": "Column", "children": []string{"header", "schedule_body"}, "align": "stretch", "gap": 0.0},
+		map[string]any{"id": "header", "component": "CardHeader", "title": map[string]any{"path": "/content/title"}, "theme": "green", "fallbackMarkdown": "**" + spec.Title + "**"},
+		map[string]any{"id": "meeting_title", "component": "Text", "text": map[string]any{"path": "/content/body"}, "variant": "body", "sizeToken": "common_h2_text_style__font_size", "colorToken": "common_level1_base_color", "bold": true},
+	}
+	if spec.ScheduleTime != "" {
+		children = append(children, "meeting_time_row")
+		components = append(components,
+			map[string]any{"id": "meeting_time_row", "component": "Row", "children": []string{"time_icon", "meeting_time"}, "align": "center", "gap": spacingTight},
+			map[string]any{"id": "time_icon", "component": "Image", "url": scheduleIcon(clockIconPath, "#1F2329"), "darkUrl": scheduleIcon(clockIconPath, "#FFFFFF"), "variant": "icon", "fit": "contain", "cornerRadius": 0.0, "previewEnabled": false},
+			map[string]any{"id": "meeting_time", "component": "Text", "text": spec.ScheduleTime, "variant": "body", "maxLine": 2.0},
+		)
+	}
+	if spec.MeetingURL != "" || spec.MeetingState != "" || spec.MeetingNumber != "" {
+		children = append(children, "meeting_join_row")
+		joinChildren := []string{"meeting_join"}
+		join := map[string]any{"id": "meeting_join", "component": "Text", "text": "钉钉视频会议", "variant": "body", "colorToken": "extended_blue6_color"}
+		if spec.MeetingURL != "" {
+			join = map[string]any{"id": "meeting_join", "component": "Link", "text": "加入钉钉视频会议", "action": map[string]any{"functionCall": map[string]any{"call": "openUrl", "args": map[string]any{"url": spec.MeetingURL}}}}
+		}
+		components = append(components,
+			map[string]any{"id": "meeting_join_row", "component": "Row", "children": []string{"meeting_icon", "meeting_join_details"}, "align": "start", "gap": spacingTight},
+			map[string]any{"id": "meeting_icon", "component": "Image", "url": scheduleIcon(videoIconPath, "#007FFF"), "darkUrl": scheduleIcon(videoIconPath, "#007FFF"), "variant": "icon", "fit": "contain", "cornerRadius": 0.0, "previewEnabled": false},
+			join,
+		)
+		parts := []string{}
+		if spec.MeetingState != "" {
+			parts = append(parts, spec.MeetingState)
+		}
+		if spec.MeetingNumber != "" {
+			parts = append(parts, "会议号："+spec.MeetingNumber)
+		}
+		if len(parts) > 0 {
+			joinChildren = append(joinChildren, "meeting_meta")
+			components = append(components, map[string]any{"id": "meeting_meta", "component": "Text", "text": "● " + strings.Join(parts, " | "), "variant": "caption", "colorToken": "common_level3_base_color", "maxLine": 2.0})
+		}
+		components = append(components, map[string]any{"id": "meeting_join_details", "component": "Column", "children": joinChildren, "align": "stretch", "gap": spacingTight, "weight": 1.0})
+	}
+	if spec.PrimaryCTA != "" {
+		children = append(children, "schedule_actions")
+		buttonVariant := "primary"
+		if spec.ActionDisabled {
+			buttonVariant = "default"
+		}
+		components = append(components,
+			map[string]any{"id": "schedule_actions", "component": "Row", "children": []string{"primary_button"}, "align": "stretch"},
+			map[string]any{"id": "primary_label", "component": "Text", "text": spec.PrimaryCTA, "variant": "body"},
+			map[string]any{"id": "primary_button", "component": "Button", "child": "primary_label", "variant": buttonVariant, "weight": 1.0, "disabled": spec.ActionDisabled, "action": eventAction("schedule_accept", spec.SurfaceID)},
+		)
+	}
+	components = append(components, map[string]any{"id": "schedule_body", "component": "Column", "children": children, "align": "stretch", "gap": spacingContent, "padding": 16.0})
+	messages := []map[string]any{
+		{"version": "v1.0", "createSurface": map[string]any{"surfaceId": spec.SurfaceID, "catalogId": registry.Catalog().CatalogID, "sendDataModel": true}},
+		{"version": "v1.0", "updateDataModel": map[string]any{"surfaceId": spec.SurfaceID, "path": "/", "value": map[string]any{"content": map[string]any{"title": spec.Title, "body": spec.Body}, "form": map[string]any{}}}},
+		{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": spec.SurfaceID, "components": components}},
+	}
+	if validation := registry.Validate(messages, "create"); !validation.Valid {
+		return nil, fmt.Errorf("generated schedule failed validation: %+v", validation.Diagnostics)
+	}
+	return messages, nil
+}
+
+func quoteDetails(title, body string) string {
+	lines := []string{"> **" + title + "**", ">"}
+	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+		if line == "" {
+			lines = append(lines, ">")
+		} else {
+			lines = append(lines, "> "+line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func defaultString(value, fallback string) string {
@@ -459,8 +935,6 @@ func eventAction(name, surfaceID string) map[string]any {
 func actionEventName(recipe string, primary bool) string {
 	if primary {
 		switch recipe {
-		case "approval":
-			return "approval_submit"
 		case "form":
 			return "form_submit"
 		default:
@@ -468,8 +942,6 @@ func actionEventName(recipe string, primary bool) string {
 		}
 	}
 	switch recipe {
-	case "approval":
-		return "approval_return"
 	case "form":
 		return "form_cancel"
 	default:

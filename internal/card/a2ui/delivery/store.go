@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,15 +17,18 @@ import (
 )
 
 type Record struct {
-	Handle         string        `json:"handle"`
-	BizID          string        `json:"bizId"`
-	Profile        ProfileScope  `json:"profile"`
-	ConversationID string        `json:"conversationId,omitempty"`
-	ReceiverID     string        `json:"receiverOpenDingTalkId,omitempty"`
-	Surface        state.Surface `json:"surface"`
-	FlowStatus     string        `json:"flowStatus"`
-	Revision       int           `json:"revision"`
-	UpdatedAt      time.Time     `json:"updatedAt"`
+	Handle               string        `json:"handle"`
+	BizID                string        `json:"bizId"`
+	CardInstanceID       string        `json:"cardInstanceId,omitempty"`
+	CreateRequestID      string        `json:"createRequestId,omitempty"`
+	IdempotencyKeySHA256 string        `json:"idempotencyKeySha256,omitempty"`
+	Profile              ProfileScope  `json:"profile"`
+	ConversationID       string        `json:"conversationId,omitempty"`
+	ReceiverID           string        `json:"receiverOpenDingTalkId,omitempty"`
+	Surface              state.Surface `json:"surface"`
+	FlowStatus           string        `json:"flowStatus"`
+	Revision             int           `json:"revision"`
+	UpdatedAt            time.Time     `json:"updatedAt"`
 }
 
 // ProfileScope freezes the non-sensitive identity and transport environment
@@ -270,6 +274,50 @@ func ExtractBizID(response any) string {
 				if keys[key] {
 					if text, ok := child.(string); ok && text != "" {
 						return text
+					}
+				}
+			}
+			for _, child := range typed {
+				if found := visit(child); found != "" {
+					return found
+				}
+			}
+		case []any:
+			for _, child := range typed {
+				if found := visit(child); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	return visit(response)
+}
+
+// ExtractCardInstanceID is best-effort: some IM responses identify the card
+// only by bizId. The ledger keeps an empty value instead of inventing one.
+func ExtractCardInstanceID(response any) string {
+	var visit func(any) string
+	visit = func(value any) string {
+		switch typed := value.(type) {
+		case map[string]any:
+			if raw, ok := typed["cardInstanceId"]; ok {
+				switch id := raw.(type) {
+				case string:
+					return strings.TrimSpace(id)
+				case json.Number:
+					return id.String()
+				case float64:
+					if id > 0 && id == float64(int64(id)) {
+						return strconv.FormatInt(int64(id), 10)
+					}
+				case int64:
+					if id > 0 {
+						return strconv.FormatInt(id, 10)
+					}
+				case int:
+					if id > 0 {
+						return strconv.Itoa(id)
 					}
 				}
 			}
