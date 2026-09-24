@@ -456,7 +456,7 @@ func TestInformationMetricsUseLabeledThemedTiles(t *testing.T) {
 		column := byID[fmt.Sprintf("metric_%d", i+1)]
 		value := byID[fmt.Sprintf("metric_value_%d", i+1)]
 		label := byID[fmt.Sprintf("metric_label_%d", i+1)]
-		if panel["backgroundColorToken"] != "extended_"+theme+"0_color" || panel["backgroundColor"] != metricBackground(theme) || panel["cornerRadius"] != 0.0 || panel["borderWidth"] != nil || panel["borderColorToken"] != nil {
+		if panel["backgroundColorToken"] != "extended_"+theme+"0_color" || panel["backgroundColor"] != metricBackground(theme) || panel["cornerRadius"] != 8.0 || panel["borderWidth"] != nil || panel["borderColorToken"] != nil {
 			t.Errorf("%s tile surface = %v", theme, panel)
 		}
 		if got := fmt.Sprint(column["children"]); got != fmt.Sprintf("[metric_label_%d metric_value_%d]", i+1, i+1) {

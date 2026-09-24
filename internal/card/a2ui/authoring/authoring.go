@@ -441,7 +441,6 @@ func Compile(spec Spec) ([]map[string]any, error) {
 				if theme := metricTheme(metric.Theme); theme != "" {
 					panel["backgroundColorToken"] = "extended_" + theme + "0_color"
 					panel["backgroundColor"] = metricBackground(theme)
-					panel["cornerRadius"] = 0.0
 					delete(panel, "borderWidth")
 					delete(panel, "borderColorToken")
 				}
