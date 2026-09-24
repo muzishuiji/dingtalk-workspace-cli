@@ -170,7 +170,7 @@ func newCardRecipeListCommand() *cobra.Command {
 func newCardRecipeShowCommand() *cobra.Command {
 	return NewLeafCommand(LeafSpec{Use: "show", Short: "查看一个 A2UI Recipe", OutputRollout: output.RolloutUnifiedActive,
 		Flags: []LeafFlag{{Name: "name", Bind: "name", Usage: "Recipe 名称", Required: true, Trim: true}}, Safety: readSafety(),
-		Contract: localContract("recipe_show", "card recipe show", "返回 Recipe 的使用场景和区块构成", "Agent 已选定 Recipe 并需确认信息层次时", "要生成消息时使用 card compose", "dws card recipe show --name approval"),
+		Contract: localContract("recipe_show", "card recipe show", "返回 Recipe 的使用场景和区块构成", "Agent 已选定 Recipe 并需确认信息层次时", "要生成消息时使用 card compose", "dws card recipe show --name information"),
 		ResultCall: func(_ *cobra.Command, _ string, args map[string]any) (output.CommandResult, error) {
 			name := fmt.Sprint(args["name"])
 			for _, recipe := range authoring.Recipes() {

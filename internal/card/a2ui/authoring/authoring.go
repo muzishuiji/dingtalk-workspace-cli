@@ -412,7 +412,7 @@ func Compile(spec Spec) ([]map[string]any, error) {
 	}
 	if spec.Subtitle != "" {
 		children = append(children, "subtitle")
-		components = append(components, map[string]any{"id": "subtitle", "component": "Text", "text": map[string]any{"path": "/content/subtitle"}, "variant": "caption", "color": "gray", "maxLine": 3.0})
+		components = append(components, map[string]any{"id": "subtitle", "component": "Text", "text": map[string]any{"path": "/content/subtitle"}, "variant": "caption", "colorToken": "common_level3_base_color", "maxLine": 3.0})
 	}
 	if spec.ImageURL != "" {
 		children = append(children, "hero")
@@ -423,7 +423,7 @@ func Compile(spec Spec) ([]map[string]any, error) {
 		components = append(components, map[string]any{"id": "hero", "component": "Image", "url": spec.ImageURL, "fit": imageFit, "variant": "header", "cornerRadius": 10.0, "previewEnabled": true, "accessibility": map[string]any{"label": defaultString(spec.ImageAlt, spec.Title)}})
 		if spec.ImageCaption != "" {
 			children = append(children, "image_caption")
-			components = append(components, map[string]any{"id": "image_caption", "component": "Text", "text": spec.ImageCaption, "variant": "caption", "color": "gray", "maxLine": 3.0})
+			components = append(components, map[string]any{"id": "image_caption", "component": "Text", "text": spec.ImageCaption, "variant": "caption", "colorToken": "common_level3_base_color", "maxLine": 3.0})
 		}
 	}
 	if len(spec.Metrics) > 0 {
@@ -467,7 +467,7 @@ func Compile(spec Spec) ([]map[string]any, error) {
 					value["customDarkColor"] = metricDarkValueColor(theme)
 				}
 			}
-			label := map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "color": "gray", "maxLine": 2.0}
+			label := map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "caption", "colorToken": "common_level2_base_color", "maxLine": 2.0}
 			if spec.Recipe == "information" {
 				label = map[string]any{"id": labelID, "component": "Text", "text": metric.Label, "variant": "body", "colorToken": "common_level2_base_color", "customLightColor": "#687078", "customDarkColor": "#A8B1BA", "maxLine": 2.0}
 			}
@@ -504,7 +504,7 @@ func Compile(spec Spec) ([]map[string]any, error) {
 			components = append(components, map[string]any{"id": titleID, "component": "Text", "text": highlight.Title, "variant": "body", "bold": true, "maxLine": 2.0})
 			if highlight.Detail != "" {
 				copyChildren = append(copyChildren, detailID)
-				components = append(components, map[string]any{"id": detailID, "component": "Text", "text": highlight.Detail, "variant": "caption", "color": "gray", "maxLine": 3.0})
+				components = append(components, map[string]any{"id": detailID, "component": "Text", "text": highlight.Detail, "variant": "caption", "colorToken": "common_level2_base_color", "maxLine": 3.0})
 			}
 			components = append(components, map[string]any{"id": copyID, "component": "Column", "children": copyChildren, "gap": spacingTight, "weight": 1.0})
 			rowChildren := []string{copyID}

@@ -214,6 +214,14 @@ func TestInformationRecipeBuildsAReadableHierarchy(t *testing.T) {
 			t.Errorf("%s must inherit its own panel surface", id)
 		}
 	}
+	for id, token := range map[string]string{
+		"subtitle": "common_level3_base_color", "image_caption": "common_level3_base_color",
+		"metric_label_1": "common_level2_base_color", "highlight_detail_1": "common_level2_base_color",
+	} {
+		if _, invalid := byID[id]["color"]; invalid || byID[id]["colorToken"] != token {
+			t.Errorf("%s must use the protocol color token %s: %v", id, token, byID[id])
+		}
+	}
 }
 
 func TestRequestedComponentGuidesAreCovered(t *testing.T) {
